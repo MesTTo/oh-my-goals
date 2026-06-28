@@ -7,6 +7,8 @@ reasoning runs on [`@metta-ts`](https://www.npmjs.com/package/@metta-ts/core), a
 pure-TypeScript MeTTa (Hyperon) interpreter. No SWI-Prolog, no Python, no native
 addon. It runs anywhere TypeScript runs.
 
+The MeTTa-TS runtime it runs on: <https://github.com/MesTTo/Meta-TypeScript-Talk>
+
 ## The scenario, run
 
 Checkout is down. The on-call engineers want to paste the raw production logs into
@@ -130,6 +132,11 @@ npm test          # differential oracle + per-engine unit tests
 npm run build     # tsc -> dist
 npx jscpd src     # 0 clones
 ```
+
+## Links
+
+- MeTTa-TS, the pure-TypeScript MeTTa runtime: <https://github.com/MesTTo/Meta-TypeScript-Talk>
+- The original GoalChainer (on PeTTa, with the real OmegaClaw engines): <https://github.com/MesTTo/OmegaClaw-GoalChainer>
 
 ## License
 
