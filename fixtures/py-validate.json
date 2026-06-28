@@ -1,0 +1,206 @@
+{
+  "cases": [
+    {
+      "checks": [
+        {
+          "check": "raw log is blocked",
+          "passed": true
+        },
+        {
+          "check": "raw log deontic is forbidden",
+          "passed": true
+        },
+        {
+          "check": "redacted summary is recommended",
+          "passed": true
+        }
+      ],
+      "deontic": {
+        "hold_external_update": "permitted",
+        "publish_raw_log": "forbidden",
+        "publish_redacted_summary": "obligated"
+      },
+      "evidence": {
+        "concept_scores": {},
+        "coordination_needed": true,
+        "facts_ready": true,
+        "mood": "declarative",
+        "privacy_at_stake": true,
+        "propositions": [],
+        "provenance": "keyword",
+        "public_declared": false,
+        "sensitive_categories": [
+          "customer emails",
+          "order IDs",
+          "request payloads",
+          "raw logs"
+        ]
+      },
+      "name": "pii_incident",
+      "passed": true,
+      "ranking": [
+        {
+          "action_id": "publish_redacted_summary",
+          "deontic": "obligated",
+          "evidence_strength": 0.9339,
+          "score": 0.9868,
+          "status": "recommended"
+        },
+        {
+          "action_id": "hold_external_update",
+          "deontic": "permitted",
+          "evidence_strength": 0.7525,
+          "score": 0.3857,
+          "status": "weak"
+        },
+        {
+          "action_id": "publish_raw_log",
+          "deontic": "forbidden",
+          "evidence_strength": 0.053,
+          "score": -1.0,
+          "status": "blocked"
+        }
+      ],
+      "request": "Checkout is down. Engineering wants to paste raw logs into the incident room. Support says the logs may include customer emails, order IDs, and request payloads.",
+      "summary": "sensitive data present, facts ready",
+      "top_action": "publish_redacted_summary"
+    },
+    {
+      "checks": [
+        {
+          "check": "raw log is not blocked",
+          "passed": true
+        },
+        {
+          "check": "raw log deontic is permitted",
+          "passed": true
+        }
+      ],
+      "deontic": {
+        "hold_external_update": "permitted",
+        "publish_raw_log": "permitted",
+        "publish_redacted_summary": "obligated"
+      },
+      "evidence": {
+        "concept_scores": {},
+        "coordination_needed": true,
+        "facts_ready": true,
+        "mood": "declarative",
+        "privacy_at_stake": false,
+        "propositions": [],
+        "provenance": "keyword",
+        "public_declared": true,
+        "sensitive_categories": []
+      },
+      "name": "public_no_data",
+      "passed": true,
+      "ranking": [
+        {
+          "action_id": "publish_redacted_summary",
+          "deontic": "obligated",
+          "evidence_strength": 0.9339,
+          "score": 0.9868,
+          "status": "recommended"
+        },
+        {
+          "action_id": "publish_raw_log",
+          "deontic": "permitted",
+          "evidence_strength": 0.884,
+          "score": 0.8465,
+          "status": "recommended"
+        },
+        {
+          "action_id": "hold_external_update",
+          "deontic": "permitted",
+          "evidence_strength": 0.7525,
+          "score": 0.3857,
+          "status": "weak"
+        }
+      ],
+      "request": "The outage is resolved. There is no sensitive data in this status, it is safe to share publicly with engineering and support.",
+      "summary": "no sensitive data, declared safe to share",
+      "top_action": "publish_redacted_summary"
+    },
+    {
+      "checks": [
+        {
+          "check": "raw log is blocked",
+          "passed": true
+        },
+        {
+          "check": "holding outranks publishing",
+          "passed": true
+        }
+      ],
+      "deontic": {
+        "hold_external_update": "obligated",
+        "publish_raw_log": "forbidden",
+        "publish_redacted_summary": "permitted"
+      },
+      "evidence": {
+        "concept_scores": {},
+        "coordination_needed": true,
+        "facts_ready": false,
+        "mood": "declarative",
+        "privacy_at_stake": true,
+        "propositions": [],
+        "provenance": "keyword",
+        "public_declared": false,
+        "sensitive_categories": [
+          "customer emails",
+          "order IDs",
+          "raw logs"
+        ]
+      },
+      "name": "facts_not_ready",
+      "passed": true,
+      "ranking": [
+        {
+          "action_id": "hold_external_update",
+          "deontic": "obligated",
+          "evidence_strength": 0.8175,
+          "score": 0.5281,
+          "status": "candidate"
+        },
+        {
+          "action_id": "publish_redacted_summary",
+          "deontic": "permitted",
+          "evidence_strength": 0.9335,
+          "score": 0.498,
+          "status": "weak"
+        },
+        {
+          "action_id": "publish_raw_log",
+          "deontic": "forbidden",
+          "evidence_strength": 0.065,
+          "score": -1.0,
+          "status": "blocked"
+        }
+      ],
+      "request": "Checkout is down. Engineering wants to share raw logs with customer emails and order IDs, but the root cause is unknown and the facts are not ready.",
+      "summary": "sensitive data present, facts not ready",
+      "top_action": "hold_external_update"
+    }
+  ],
+  "cross_checks": [
+    {
+      "check": "raw log forbidden only when privacy is at stake",
+      "passed": true
+    },
+    {
+      "check": "the recommended action differs across the three requests",
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "raw_log_status_by_case": {
+    "facts_not_ready": "forbidden",
+    "pii_incident": "forbidden",
+    "public_no_data": "permitted"
+  },
+  "top_action_by_case": {
+    "facts_not_ready": "hold_external_update",
+    "pii_incident": "publish_redacted_summary",
+    "public_no_data": "publish_redacted_summary"
+  }
+}

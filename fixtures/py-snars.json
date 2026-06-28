@@ -1,0 +1,39 @@
+{
+  "claim": "publish_raw_log is forbidden_action",
+  "derived": true,
+  "engine": "SNARS deduction (Subjective-Logic NARS) on PeTTa",
+  "evidence_provenance": "keyword",
+  "expectation": 0.834711,
+  "grounding": "the raw logs contain customer emails, order IDs, request payloads, raw logs",
+  "opinion": {
+    "a": 0.5,
+    "b": 0.669421,
+    "d": 0.0,
+    "u": 0.330579
+  },
+  "privacy_at_stake": true,
+  "proof": {
+    "premises": [
+      {
+        "opinion": {
+          "a": 0.5,
+          "b": 0.818182,
+          "d": 0.0,
+          "u": 0.181818
+        },
+        "statement": "publish_raw_log is risky_action."
+      },
+      {
+        "opinion": {
+          "a": 0.5,
+          "b": 0.818182,
+          "d": 0.0,
+          "u": 0.181818
+        },
+        "statement": "risky_action is forbidden_action."
+      }
+    ],
+    "rule": "deduction"
+  },
+  "why": "(because ded ((premise \"publish_raw_log is risky_action.\" (Opinion 0.8181818181818182 0.0 0.18181818181818182 0.5)) (premise \"risky_action is forbidden_action.\" (Opinion 0.8181818181818182 0.0 0.18181818181818182 0.5))) ())"
+}

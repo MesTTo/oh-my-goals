@@ -1,0 +1,844 @@
+{
+  "decisions": [
+    {
+      "action_id": "publish_redacted_summary",
+      "collective_score": 1.0,
+      "evidence": {
+        "confidence": 0.977149,
+        "projection": "(Acceptable publish_redacted_summary) (STV 0.9339 0.9771)",
+        "proofs": [
+          "deontic: lib_deontic derived obligated for publish_redacted_summary",
+          "belief: (: (merge/revision (rule-proof redaction_to_accept red_redacted) (rule-proof support_to_accept red_support)) (Acceptable publish_redacted_summary) (STV 0.9339042316258351 0.9771490750816104))"
+        ],
+        "source": "omega-core-petta-lib-deontic-pettachainer",
+        "strength": 0.933904
+      },
+      "goal_score": 1.0,
+      "individual_score": 1.0,
+      "label": "Publish redacted summary",
+      "metadata": {
+        "deontic_expectation": "0.923989",
+        "motivation": "1.0000",
+        "score_engine": "prolog-on-petta"
+      },
+      "missing_required_goals": [],
+      "norm_reasons": [
+        "expectation=0.924"
+      ],
+      "norm_status": "obligated",
+      "satisfied_goals": [
+        "preserve_privacy",
+        "restore_service",
+        "coordinate_team"
+      ],
+      "score": 0.986774,
+      "status": "recommended",
+      "warnings": []
+    },
+    {
+      "action_id": "hold_external_update",
+      "collective_score": 0.0,
+      "evidence": {
+        "confidence": 0.812,
+        "projection": "(Acceptable hold_external_update) (STV 0.7525 0.8120)",
+        "proofs": [
+          "deontic: lib_deontic derived permitted for hold_external_update",
+          "belief: (: (rule-proof protect_to_accept hold_protect) (Acceptable hold_external_update) (STV 0.7525 0.812))"
+        ],
+        "source": "omega-core-petta-lib-deontic-pettachainer",
+        "strength": 0.7525
+      },
+      "goal_score": 0.365385,
+      "individual_score": 1.0,
+      "label": "Hold external update",
+      "metadata": {
+        "deontic_expectation": "0.705030",
+        "motivation": "0.5256",
+        "score_engine": "prolog-on-petta"
+      },
+      "missing_required_goals": [
+        "restore_service",
+        "coordinate_team"
+      ],
+      "norm_reasons": [
+        "expectation=0.705"
+      ],
+      "norm_status": "permitted",
+      "satisfied_goals": [
+        "preserve_privacy"
+      ],
+      "score": 0.516041,
+      "status": "candidate",
+      "warnings": [
+        "missing required goals: restore_service, coordinate_team"
+      ]
+    },
+    {
+      "action_id": "publish_raw_log",
+      "collective_score": 1.0,
+      "evidence": {
+        "confidence": 0.886,
+        "projection": "(Acceptable publish_raw_log) (STV 0.0530 0.8860)",
+        "proofs": [
+          "deontic: lib_deontic derived forbidden for publish_raw_log",
+          "belief: (: (rule-proof risk_to_accept raw_risk) (Acceptable publish_raw_log) (STV 0.053000000000000005 0.886))"
+        ],
+        "source": "omega-core-petta-lib-deontic-pettachainer",
+        "strength": 0.053
+      },
+      "goal_score": 0.634615,
+      "individual_score": 0.0,
+      "label": "Publish raw incident log",
+      "metadata": {
+        "deontic_expectation": "0.103958",
+        "motivation": "0.0000",
+        "score_engine": "prolog-on-petta"
+      },
+      "missing_required_goals": [
+        "preserve_privacy"
+      ],
+      "norm_reasons": [
+        "expectation=0.104"
+      ],
+      "norm_status": "forbidden",
+      "satisfied_goals": [
+        "restore_service",
+        "coordinate_team"
+      ],
+      "score": -1.0,
+      "status": "blocked",
+      "warnings": [
+        "missing required goals: preserve_privacy",
+        "native deontic status: forbidden"
+      ]
+    }
+  ],
+  "explanation": [
+    "Recommended: Publish redacted summary (score 0.987).",
+    "  lib_deontic derived this action obligated (the norm positively requires it). PeTTaChainer belief b=0.9126, d=0.0646, u=0.0229.",
+    "  It satisfies: preserve_privacy, restore_service, coordinate_team.",
+    "Not chosen: Hold external update (score 0.516).",
+    "  lib_deontic derived this action permitted (allowed, not required). PeTTaChainer belief b=0.611, d=0.201, u=0.188.",
+    "  Missing required goals: restore_service, coordinate_team.",
+    "Blocked: Publish raw incident log (score -1.000).",
+    "  lib_deontic derived this action forbidden, so the score is forced negative. PeTTaChainer belief b=0.047, d=0.839, u=0.114.",
+    "  Missing required goals: preserve_privacy."
+  ],
+  "hyperbase": {
+    "contract": {
+      "primary_forms": [
+        "(edge/Pv.so subject/Cc object/Cc)",
+        "(sh (tag P v so ()) \"predicate\" (args ((arg s ...) (arg o ...))))",
+        "(hb tree EDGE_ID SH_TREE)"
+      ],
+      "purpose": "structured propositions that HyperBase can translate into SH trees",
+      "rules": [
+        "write one proposition per sentence",
+        "use concrete subject, predicate, and object or complement",
+        "avoid pronouns and vague references",
+        "preserve domain words from the request",
+        "keep normative decisions separate from observed facts"
+      ]
+    },
+    "evidence": {
+      "concept_scores": {},
+      "coordination_needed": true,
+      "facts_ready": true,
+      "mood": "declarative",
+      "privacy_at_stake": true,
+      "propositions": [],
+      "provenance": "keyword",
+      "public_declared": false,
+      "sensitive_categories": [
+        "customer emails",
+        "order IDs",
+        "request payloads",
+        "raw logs"
+      ]
+    },
+    "metta_program": [
+      "(hb edge incident-pii-1 (contains/Pv.so raw_incident_logs/Cc customer_emails/Cc))",
+      "(hb type incident-pii-1 predicate)",
+      "(hb tree incident-pii-1 (sh (tag P v so ()) \"contains\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"raw incident logs\")) (arg o (sh-atom (tag C c NoRoles ()) \"customer emails\"))))))",
+      "(hb main type incident-pii-1 P)",
+      "(hb subtype incident-pii-1 v)",
+      "(hb roles incident-pii-1 so)",
+      "(hb namespace incident-pii-1 ())",
+      "(hb source incident-pii-1 \"Raw incident logs contain customer emails.\")",
+      "(hb connector incident-pii-1 contains/Pv.so)",
+      "(hb arg roles incident-pii-1 so)",
+      "(hb connector label incident-pii-1 \"contains\")",
+      "(hb connector main type incident-pii-1 P)",
+      "(hb connector subtype incident-pii-1 v)",
+      "(hb connector roles incident-pii-1 so)",
+      "(hb connector namespace incident-pii-1 ())",
+      "(hb arg incident-pii-1 s raw_incident_logs/Cc)",
+      "(hb arg pos incident-pii-1 0 s raw_incident_logs/Cc)",
+      "(hb role kind incident-pii-1 0 s subject)",
+      "(hb arg incident-pii-1 o customer_emails/Cc)",
+      "(hb arg pos incident-pii-1 1 o customer_emails/Cc)",
+      "(hb role kind incident-pii-1 1 o object)",
+      "(hb edge incident-pii-2 (contains/Pv.so raw_incident_logs/Cc order_ids/Cc))",
+      "(hb type incident-pii-2 predicate)",
+      "(hb tree incident-pii-2 (sh (tag P v so ()) \"contains\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"raw incident logs\")) (arg o (sh-atom (tag C c NoRoles ()) \"order IDs\"))))))",
+      "(hb main type incident-pii-2 P)",
+      "(hb subtype incident-pii-2 v)",
+      "(hb roles incident-pii-2 so)",
+      "(hb namespace incident-pii-2 ())",
+      "(hb source incident-pii-2 \"Raw incident logs contain order IDs.\")",
+      "(hb connector incident-pii-2 contains/Pv.so)",
+      "(hb arg roles incident-pii-2 so)",
+      "(hb connector label incident-pii-2 \"contains\")",
+      "(hb connector main type incident-pii-2 P)",
+      "(hb connector subtype incident-pii-2 v)",
+      "(hb connector roles incident-pii-2 so)",
+      "(hb connector namespace incident-pii-2 ())",
+      "(hb arg incident-pii-2 s raw_incident_logs/Cc)",
+      "(hb arg pos incident-pii-2 0 s raw_incident_logs/Cc)",
+      "(hb role kind incident-pii-2 0 s subject)",
+      "(hb arg incident-pii-2 o order_ids/Cc)",
+      "(hb arg pos incident-pii-2 1 o order_ids/Cc)",
+      "(hb role kind incident-pii-2 1 o object)",
+      "(hb edge incident-pii-3 (contains/Pv.so raw_incident_logs/Cc request_payloads/Cc))",
+      "(hb type incident-pii-3 predicate)",
+      "(hb tree incident-pii-3 (sh (tag P v so ()) \"contains\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"raw incident logs\")) (arg o (sh-atom (tag C c NoRoles ()) \"request payloads\"))))))",
+      "(hb main type incident-pii-3 P)",
+      "(hb subtype incident-pii-3 v)",
+      "(hb roles incident-pii-3 so)",
+      "(hb namespace incident-pii-3 ())",
+      "(hb source incident-pii-3 \"Raw incident logs contain request payloads.\")",
+      "(hb connector incident-pii-3 contains/Pv.so)",
+      "(hb arg roles incident-pii-3 so)",
+      "(hb connector label incident-pii-3 \"contains\")",
+      "(hb connector main type incident-pii-3 P)",
+      "(hb connector subtype incident-pii-3 v)",
+      "(hb connector roles incident-pii-3 so)",
+      "(hb connector namespace incident-pii-3 ())",
+      "(hb arg incident-pii-3 s raw_incident_logs/Cc)",
+      "(hb arg pos incident-pii-3 0 s raw_incident_logs/Cc)",
+      "(hb role kind incident-pii-3 0 s subject)",
+      "(hb arg incident-pii-3 o request_payloads/Cc)",
+      "(hb arg pos incident-pii-3 1 o request_payloads/Cc)",
+      "(hb role kind incident-pii-3 1 o object)",
+      "(hb edge incident-risk-1 (exposes/Pv.so publishing_raw_incident_logs/Cc identifiable_user_data/Cc))",
+      "(hb type incident-risk-1 predicate)",
+      "(hb tree incident-risk-1 (sh (tag P v so ()) \"exposes\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"publishing raw incident logs\")) (arg o (sh-atom (tag C c NoRoles ()) \"identifiable user data\"))))))",
+      "(hb main type incident-risk-1 P)",
+      "(hb subtype incident-risk-1 v)",
+      "(hb roles incident-risk-1 so)",
+      "(hb namespace incident-risk-1 ())",
+      "(hb source incident-risk-1 \"Publishing raw incident logs exposes identifiable user data.\")",
+      "(hb connector incident-risk-1 exposes/Pv.so)",
+      "(hb arg roles incident-risk-1 so)",
+      "(hb connector label incident-risk-1 \"exposes\")",
+      "(hb connector main type incident-risk-1 P)",
+      "(hb connector subtype incident-risk-1 v)",
+      "(hb connector roles incident-risk-1 so)",
+      "(hb connector namespace incident-risk-1 ())",
+      "(hb arg incident-risk-1 s publishing_raw_incident_logs/Cc)",
+      "(hb arg pos incident-risk-1 0 s publishing_raw_incident_logs/Cc)",
+      "(hb role kind incident-risk-1 0 s subject)",
+      "(hb arg incident-risk-1 o identifiable_user_data/Cc)",
+      "(hb arg pos incident-risk-1 1 o identifiable_user_data/Cc)",
+      "(hb role kind incident-risk-1 1 o object)",
+      "(hb edge incident-control-1 (protects/Pv.so redacted_summary/Cc privacy/Cc))",
+      "(hb type incident-control-1 predicate)",
+      "(hb tree incident-control-1 (sh (tag P v so ()) \"protects\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"redacted summary\")) (arg o (sh-atom (tag C c NoRoles ()) \"privacy\"))))))",
+      "(hb main type incident-control-1 P)",
+      "(hb subtype incident-control-1 v)",
+      "(hb roles incident-control-1 so)",
+      "(hb namespace incident-control-1 ())",
+      "(hb source incident-control-1 \"The redacted summary protects privacy.\")",
+      "(hb connector incident-control-1 protects/Pv.so)",
+      "(hb arg roles incident-control-1 so)",
+      "(hb connector label incident-control-1 \"protects\")",
+      "(hb connector main type incident-control-1 P)",
+      "(hb connector subtype incident-control-1 v)",
+      "(hb connector roles incident-control-1 so)",
+      "(hb connector namespace incident-control-1 ())",
+      "(hb arg incident-control-1 s redacted_summary/Cc)",
+      "(hb arg pos incident-control-1 0 s redacted_summary/Cc)",
+      "(hb role kind incident-control-1 0 s subject)",
+      "(hb arg incident-control-1 o privacy/Cc)",
+      "(hb arg pos incident-control-1 1 o privacy/Cc)",
+      "(hb role kind incident-control-1 1 o object)",
+      "(hb edge incident-control-2 (supports/Pv.so redacted_summary/Cc responders/Cc))",
+      "(hb type incident-control-2 predicate)",
+      "(hb tree incident-control-2 (sh (tag P v so ()) \"supports\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"redacted summary\")) (arg o (sh-atom (tag C c NoRoles ()) \"responders\"))))))",
+      "(hb main type incident-control-2 P)",
+      "(hb subtype incident-control-2 v)",
+      "(hb roles incident-control-2 so)",
+      "(hb namespace incident-control-2 ())",
+      "(hb source incident-control-2 \"The redacted summary supports responders.\")",
+      "(hb connector incident-control-2 supports/Pv.so)",
+      "(hb arg roles incident-control-2 so)",
+      "(hb connector label incident-control-2 \"supports\")",
+      "(hb connector main type incident-control-2 P)",
+      "(hb connector subtype incident-control-2 v)",
+      "(hb connector roles incident-control-2 so)",
+      "(hb connector namespace incident-control-2 ())",
+      "(hb arg incident-control-2 s redacted_summary/Cc)",
+      "(hb arg pos incident-control-2 0 s redacted_summary/Cc)",
+      "(hb role kind incident-control-2 0 s subject)",
+      "(hb arg incident-control-2 o responders/Cc)",
+      "(hb arg pos incident-control-2 1 o responders/Cc)",
+      "(hb role kind incident-control-2 1 o object)",
+      "(hb edge incident-control-3 (protects/Pv.so holding_external_update/Cc privacy/Cc))",
+      "(hb type incident-control-3 predicate)",
+      "(hb tree incident-control-3 (sh (tag P v so ()) \"protects\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"holding external update\")) (arg o (sh-atom (tag C c NoRoles ()) \"privacy\"))))))",
+      "(hb main type incident-control-3 P)",
+      "(hb subtype incident-control-3 v)",
+      "(hb roles incident-control-3 so)",
+      "(hb namespace incident-control-3 ())",
+      "(hb source incident-control-3 \"Holding the external update protects privacy.\")",
+      "(hb connector incident-control-3 protects/Pv.so)",
+      "(hb arg roles incident-control-3 so)",
+      "(hb connector label incident-control-3 \"protects\")",
+      "(hb connector main type incident-control-3 P)",
+      "(hb connector subtype incident-control-3 v)",
+      "(hb connector roles incident-control-3 so)",
+      "(hb connector namespace incident-control-3 ())",
+      "(hb arg incident-control-3 s holding_external_update/Cc)",
+      "(hb arg pos incident-control-3 0 s holding_external_update/Cc)",
+      "(hb role kind incident-control-3 0 s subject)",
+      "(hb arg incident-control-3 o privacy/Cc)",
+      "(hb arg pos incident-control-3 1 o privacy/Cc)",
+      "(hb role kind incident-control-3 1 o object)",
+      "(hb edge incident-time-1 (before/Pv.so security_review/Cc verified_customer_update/Cc))",
+      "(hb type incident-time-1 predicate)",
+      "(hb tree incident-time-1 (sh (tag P v so ()) \"before\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"security review\")) (arg o (sh-atom (tag C c NoRoles ()) \"verified customer update\"))))))",
+      "(hb main type incident-time-1 P)",
+      "(hb subtype incident-time-1 v)",
+      "(hb roles incident-time-1 so)",
+      "(hb namespace incident-time-1 ())",
+      "(hb source incident-time-1 \"Security review happens before verified customer update.\")",
+      "(hb connector incident-time-1 before/Pv.so)",
+      "(hb arg roles incident-time-1 so)",
+      "(hb connector label incident-time-1 \"before\")",
+      "(hb connector main type incident-time-1 P)",
+      "(hb connector subtype incident-time-1 v)",
+      "(hb connector roles incident-time-1 so)",
+      "(hb connector namespace incident-time-1 ())",
+      "(hb arg incident-time-1 s security_review/Cc)",
+      "(hb arg pos incident-time-1 0 s security_review/Cc)",
+      "(hb role kind incident-time-1 0 s subject)",
+      "(hb arg incident-time-1 o verified_customer_update/Cc)",
+      "(hb arg pos incident-time-1 1 o verified_customer_update/Cc)",
+      "(hb role kind incident-time-1 1 o object)"
+    ],
+    "ontology_grounding": {
+      "axiom_count": 134,
+      "module_count": 56,
+      "projection_rules": [
+        {
+          "available": true,
+          "demo_use": "sequence security review before external update before public follow-up",
+          "from": [
+            "before(x, y)",
+            "before(y, z)"
+          ],
+          "gloss": "",
+          "id": "time-before-transitivity",
+          "kind": "horn",
+          "source": "timepoints/lp_ordering/a1",
+          "to": "before(x, z)"
+        },
+        {
+          "available": true,
+          "demo_use": "shows COLORE definitions can compile into goal-directed composition rules",
+          "from": [
+            "hasChild(x, y)",
+            "hasChild(y, z)"
+          ],
+          "gloss": "Conservative Definitional Extension A person has a grandchild if their child has a child.",
+          "id": "relation-composition-grandchild",
+          "kind": "definition",
+          "source": "kinship/definitions/hasGrandchild/HGC-1",
+          "to": "hasGrandchild(x, z)"
+        },
+        {
+          "available": true,
+          "demo_use": "shows an ontology-derived relation can stay queryable without guessing",
+          "from": [
+            "hasChild(z, x)",
+            "hasChild(z, y)",
+            "x != y"
+          ],
+          "gloss": "Conservative Definitional Extension For children who have the same parent, they are siblings.",
+          "id": "relation-composition-sibling",
+          "kind": "definition",
+          "source": "kinship/definitions/hasSibling/HS-1",
+          "to": "hasSibling(x, y)"
+        }
+      ],
+      "source_available": true,
+      "source_path": "/home/user/Dev/mettabase/tests/petta/data-colore.metta"
+    },
+    "propositions": [
+      {
+        "edge": "(contains/Pv.so raw_incident_logs/Cc customer_emails/Cc)",
+        "facts": [
+          "(hb edge incident-pii-1 (contains/Pv.so raw_incident_logs/Cc customer_emails/Cc))",
+          "(hb type incident-pii-1 predicate)",
+          "(hb tree incident-pii-1 (sh (tag P v so ()) \"contains\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"raw incident logs\")) (arg o (sh-atom (tag C c NoRoles ()) \"customer emails\"))))))",
+          "(hb main type incident-pii-1 P)",
+          "(hb subtype incident-pii-1 v)",
+          "(hb roles incident-pii-1 so)",
+          "(hb namespace incident-pii-1 ())",
+          "(hb source incident-pii-1 \"Raw incident logs contain customer emails.\")",
+          "(hb connector incident-pii-1 contains/Pv.so)",
+          "(hb arg roles incident-pii-1 so)",
+          "(hb connector label incident-pii-1 \"contains\")",
+          "(hb connector main type incident-pii-1 P)",
+          "(hb connector subtype incident-pii-1 v)",
+          "(hb connector roles incident-pii-1 so)",
+          "(hb connector namespace incident-pii-1 ())",
+          "(hb arg incident-pii-1 s raw_incident_logs/Cc)",
+          "(hb arg pos incident-pii-1 0 s raw_incident_logs/Cc)",
+          "(hb role kind incident-pii-1 0 s subject)",
+          "(hb arg incident-pii-1 o customer_emails/Cc)",
+          "(hb arg pos incident-pii-1 1 o customer_emails/Cc)",
+          "(hb role kind incident-pii-1 1 o object)"
+        ],
+        "id": "incident-pii-1",
+        "object": "customer emails",
+        "ontology_hint": "",
+        "predicate": "contain",
+        "sentence": "Raw incident logs contain customer emails.",
+        "source": "request",
+        "subject": "raw incident logs",
+        "tree": "(sh (tag P v so ()) \"contains\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"raw incident logs\")) (arg o (sh-atom (tag C c NoRoles ()) \"customer emails\")))))"
+      },
+      {
+        "edge": "(contains/Pv.so raw_incident_logs/Cc order_ids/Cc)",
+        "facts": [
+          "(hb edge incident-pii-2 (contains/Pv.so raw_incident_logs/Cc order_ids/Cc))",
+          "(hb type incident-pii-2 predicate)",
+          "(hb tree incident-pii-2 (sh (tag P v so ()) \"contains\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"raw incident logs\")) (arg o (sh-atom (tag C c NoRoles ()) \"order IDs\"))))))",
+          "(hb main type incident-pii-2 P)",
+          "(hb subtype incident-pii-2 v)",
+          "(hb roles incident-pii-2 so)",
+          "(hb namespace incident-pii-2 ())",
+          "(hb source incident-pii-2 \"Raw incident logs contain order IDs.\")",
+          "(hb connector incident-pii-2 contains/Pv.so)",
+          "(hb arg roles incident-pii-2 so)",
+          "(hb connector label incident-pii-2 \"contains\")",
+          "(hb connector main type incident-pii-2 P)",
+          "(hb connector subtype incident-pii-2 v)",
+          "(hb connector roles incident-pii-2 so)",
+          "(hb connector namespace incident-pii-2 ())",
+          "(hb arg incident-pii-2 s raw_incident_logs/Cc)",
+          "(hb arg pos incident-pii-2 0 s raw_incident_logs/Cc)",
+          "(hb role kind incident-pii-2 0 s subject)",
+          "(hb arg incident-pii-2 o order_ids/Cc)",
+          "(hb arg pos incident-pii-2 1 o order_ids/Cc)",
+          "(hb role kind incident-pii-2 1 o object)"
+        ],
+        "id": "incident-pii-2",
+        "object": "order IDs",
+        "ontology_hint": "",
+        "predicate": "contain",
+        "sentence": "Raw incident logs contain order IDs.",
+        "source": "request",
+        "subject": "raw incident logs",
+        "tree": "(sh (tag P v so ()) \"contains\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"raw incident logs\")) (arg o (sh-atom (tag C c NoRoles ()) \"order IDs\")))))"
+      },
+      {
+        "edge": "(contains/Pv.so raw_incident_logs/Cc request_payloads/Cc)",
+        "facts": [
+          "(hb edge incident-pii-3 (contains/Pv.so raw_incident_logs/Cc request_payloads/Cc))",
+          "(hb type incident-pii-3 predicate)",
+          "(hb tree incident-pii-3 (sh (tag P v so ()) \"contains\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"raw incident logs\")) (arg o (sh-atom (tag C c NoRoles ()) \"request payloads\"))))))",
+          "(hb main type incident-pii-3 P)",
+          "(hb subtype incident-pii-3 v)",
+          "(hb roles incident-pii-3 so)",
+          "(hb namespace incident-pii-3 ())",
+          "(hb source incident-pii-3 \"Raw incident logs contain request payloads.\")",
+          "(hb connector incident-pii-3 contains/Pv.so)",
+          "(hb arg roles incident-pii-3 so)",
+          "(hb connector label incident-pii-3 \"contains\")",
+          "(hb connector main type incident-pii-3 P)",
+          "(hb connector subtype incident-pii-3 v)",
+          "(hb connector roles incident-pii-3 so)",
+          "(hb connector namespace incident-pii-3 ())",
+          "(hb arg incident-pii-3 s raw_incident_logs/Cc)",
+          "(hb arg pos incident-pii-3 0 s raw_incident_logs/Cc)",
+          "(hb role kind incident-pii-3 0 s subject)",
+          "(hb arg incident-pii-3 o request_payloads/Cc)",
+          "(hb arg pos incident-pii-3 1 o request_payloads/Cc)",
+          "(hb role kind incident-pii-3 1 o object)"
+        ],
+        "id": "incident-pii-3",
+        "object": "request payloads",
+        "ontology_hint": "",
+        "predicate": "contain",
+        "sentence": "Raw incident logs contain request payloads.",
+        "source": "request",
+        "subject": "raw incident logs",
+        "tree": "(sh (tag P v so ()) \"contains\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"raw incident logs\")) (arg o (sh-atom (tag C c NoRoles ()) \"request payloads\")))))"
+      },
+      {
+        "edge": "(exposes/Pv.so publishing_raw_incident_logs/Cc identifiable_user_data/Cc)",
+        "facts": [
+          "(hb edge incident-risk-1 (exposes/Pv.so publishing_raw_incident_logs/Cc identifiable_user_data/Cc))",
+          "(hb type incident-risk-1 predicate)",
+          "(hb tree incident-risk-1 (sh (tag P v so ()) \"exposes\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"publishing raw incident logs\")) (arg o (sh-atom (tag C c NoRoles ()) \"identifiable user data\"))))))",
+          "(hb main type incident-risk-1 P)",
+          "(hb subtype incident-risk-1 v)",
+          "(hb roles incident-risk-1 so)",
+          "(hb namespace incident-risk-1 ())",
+          "(hb source incident-risk-1 \"Publishing raw incident logs exposes identifiable user data.\")",
+          "(hb connector incident-risk-1 exposes/Pv.so)",
+          "(hb arg roles incident-risk-1 so)",
+          "(hb connector label incident-risk-1 \"exposes\")",
+          "(hb connector main type incident-risk-1 P)",
+          "(hb connector subtype incident-risk-1 v)",
+          "(hb connector roles incident-risk-1 so)",
+          "(hb connector namespace incident-risk-1 ())",
+          "(hb arg incident-risk-1 s publishing_raw_incident_logs/Cc)",
+          "(hb arg pos incident-risk-1 0 s publishing_raw_incident_logs/Cc)",
+          "(hb role kind incident-risk-1 0 s subject)",
+          "(hb arg incident-risk-1 o identifiable_user_data/Cc)",
+          "(hb arg pos incident-risk-1 1 o identifiable_user_data/Cc)",
+          "(hb role kind incident-risk-1 1 o object)"
+        ],
+        "id": "incident-risk-1",
+        "object": "identifiable user data",
+        "ontology_hint": "",
+        "predicate": "expose",
+        "sentence": "Publishing raw incident logs exposes identifiable user data.",
+        "source": "goalchainer",
+        "subject": "publishing raw incident logs",
+        "tree": "(sh (tag P v so ()) \"exposes\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"publishing raw incident logs\")) (arg o (sh-atom (tag C c NoRoles ()) \"identifiable user data\")))))"
+      },
+      {
+        "edge": "(protects/Pv.so redacted_summary/Cc privacy/Cc)",
+        "facts": [
+          "(hb edge incident-control-1 (protects/Pv.so redacted_summary/Cc privacy/Cc))",
+          "(hb type incident-control-1 predicate)",
+          "(hb tree incident-control-1 (sh (tag P v so ()) \"protects\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"redacted summary\")) (arg o (sh-atom (tag C c NoRoles ()) \"privacy\"))))))",
+          "(hb main type incident-control-1 P)",
+          "(hb subtype incident-control-1 v)",
+          "(hb roles incident-control-1 so)",
+          "(hb namespace incident-control-1 ())",
+          "(hb source incident-control-1 \"The redacted summary protects privacy.\")",
+          "(hb connector incident-control-1 protects/Pv.so)",
+          "(hb arg roles incident-control-1 so)",
+          "(hb connector label incident-control-1 \"protects\")",
+          "(hb connector main type incident-control-1 P)",
+          "(hb connector subtype incident-control-1 v)",
+          "(hb connector roles incident-control-1 so)",
+          "(hb connector namespace incident-control-1 ())",
+          "(hb arg incident-control-1 s redacted_summary/Cc)",
+          "(hb arg pos incident-control-1 0 s redacted_summary/Cc)",
+          "(hb role kind incident-control-1 0 s subject)",
+          "(hb arg incident-control-1 o privacy/Cc)",
+          "(hb arg pos incident-control-1 1 o privacy/Cc)",
+          "(hb role kind incident-control-1 1 o object)"
+        ],
+        "id": "incident-control-1",
+        "object": "privacy",
+        "ontology_hint": "",
+        "predicate": "protect",
+        "sentence": "The redacted summary protects privacy.",
+        "source": "goalchainer",
+        "subject": "redacted summary",
+        "tree": "(sh (tag P v so ()) \"protects\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"redacted summary\")) (arg o (sh-atom (tag C c NoRoles ()) \"privacy\")))))"
+      },
+      {
+        "edge": "(supports/Pv.so redacted_summary/Cc responders/Cc)",
+        "facts": [
+          "(hb edge incident-control-2 (supports/Pv.so redacted_summary/Cc responders/Cc))",
+          "(hb type incident-control-2 predicate)",
+          "(hb tree incident-control-2 (sh (tag P v so ()) \"supports\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"redacted summary\")) (arg o (sh-atom (tag C c NoRoles ()) \"responders\"))))))",
+          "(hb main type incident-control-2 P)",
+          "(hb subtype incident-control-2 v)",
+          "(hb roles incident-control-2 so)",
+          "(hb namespace incident-control-2 ())",
+          "(hb source incident-control-2 \"The redacted summary supports responders.\")",
+          "(hb connector incident-control-2 supports/Pv.so)",
+          "(hb arg roles incident-control-2 so)",
+          "(hb connector label incident-control-2 \"supports\")",
+          "(hb connector main type incident-control-2 P)",
+          "(hb connector subtype incident-control-2 v)",
+          "(hb connector roles incident-control-2 so)",
+          "(hb connector namespace incident-control-2 ())",
+          "(hb arg incident-control-2 s redacted_summary/Cc)",
+          "(hb arg pos incident-control-2 0 s redacted_summary/Cc)",
+          "(hb role kind incident-control-2 0 s subject)",
+          "(hb arg incident-control-2 o responders/Cc)",
+          "(hb arg pos incident-control-2 1 o responders/Cc)",
+          "(hb role kind incident-control-2 1 o object)"
+        ],
+        "id": "incident-control-2",
+        "object": "responders",
+        "ontology_hint": "",
+        "predicate": "support",
+        "sentence": "The redacted summary supports responders.",
+        "source": "goalchainer",
+        "subject": "redacted summary",
+        "tree": "(sh (tag P v so ()) \"supports\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"redacted summary\")) (arg o (sh-atom (tag C c NoRoles ()) \"responders\")))))"
+      },
+      {
+        "edge": "(protects/Pv.so holding_external_update/Cc privacy/Cc)",
+        "facts": [
+          "(hb edge incident-control-3 (protects/Pv.so holding_external_update/Cc privacy/Cc))",
+          "(hb type incident-control-3 predicate)",
+          "(hb tree incident-control-3 (sh (tag P v so ()) \"protects\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"holding external update\")) (arg o (sh-atom (tag C c NoRoles ()) \"privacy\"))))))",
+          "(hb main type incident-control-3 P)",
+          "(hb subtype incident-control-3 v)",
+          "(hb roles incident-control-3 so)",
+          "(hb namespace incident-control-3 ())",
+          "(hb source incident-control-3 \"Holding the external update protects privacy.\")",
+          "(hb connector incident-control-3 protects/Pv.so)",
+          "(hb arg roles incident-control-3 so)",
+          "(hb connector label incident-control-3 \"protects\")",
+          "(hb connector main type incident-control-3 P)",
+          "(hb connector subtype incident-control-3 v)",
+          "(hb connector roles incident-control-3 so)",
+          "(hb connector namespace incident-control-3 ())",
+          "(hb arg incident-control-3 s holding_external_update/Cc)",
+          "(hb arg pos incident-control-3 0 s holding_external_update/Cc)",
+          "(hb role kind incident-control-3 0 s subject)",
+          "(hb arg incident-control-3 o privacy/Cc)",
+          "(hb arg pos incident-control-3 1 o privacy/Cc)",
+          "(hb role kind incident-control-3 1 o object)"
+        ],
+        "id": "incident-control-3",
+        "object": "privacy",
+        "ontology_hint": "",
+        "predicate": "protect",
+        "sentence": "Holding the external update protects privacy.",
+        "source": "goalchainer",
+        "subject": "holding external update",
+        "tree": "(sh (tag P v so ()) \"protects\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"holding external update\")) (arg o (sh-atom (tag C c NoRoles ()) \"privacy\")))))"
+      },
+      {
+        "edge": "(before/Pv.so security_review/Cc verified_customer_update/Cc)",
+        "facts": [
+          "(hb edge incident-time-1 (before/Pv.so security_review/Cc verified_customer_update/Cc))",
+          "(hb type incident-time-1 predicate)",
+          "(hb tree incident-time-1 (sh (tag P v so ()) \"before\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"security review\")) (arg o (sh-atom (tag C c NoRoles ()) \"verified customer update\"))))))",
+          "(hb main type incident-time-1 P)",
+          "(hb subtype incident-time-1 v)",
+          "(hb roles incident-time-1 so)",
+          "(hb namespace incident-time-1 ())",
+          "(hb source incident-time-1 \"Security review happens before verified customer update.\")",
+          "(hb connector incident-time-1 before/Pv.so)",
+          "(hb arg roles incident-time-1 so)",
+          "(hb connector label incident-time-1 \"before\")",
+          "(hb connector main type incident-time-1 P)",
+          "(hb connector subtype incident-time-1 v)",
+          "(hb connector roles incident-time-1 so)",
+          "(hb connector namespace incident-time-1 ())",
+          "(hb arg incident-time-1 s security_review/Cc)",
+          "(hb arg pos incident-time-1 0 s security_review/Cc)",
+          "(hb role kind incident-time-1 0 s subject)",
+          "(hb arg incident-time-1 o verified_customer_update/Cc)",
+          "(hb arg pos incident-time-1 1 o verified_customer_update/Cc)",
+          "(hb role kind incident-time-1 1 o object)"
+        ],
+        "id": "incident-time-1",
+        "object": "verified customer update",
+        "ontology_hint": "COLORE timepoints/lp_ordering licenses before transitivity",
+        "predicate": "before",
+        "sentence": "Security review happens before verified customer update.",
+        "source": "goalchainer",
+        "subject": "security review",
+        "tree": "(sh (tag P v so ()) \"before\" (args ((arg s (sh-atom (tag C c NoRoles ()) \"security review\")) (arg o (sh-atom (tag C c NoRoles ()) \"verified customer update\")))))"
+      }
+    ],
+    "reasoner": {
+      "action_evidence": [
+        {
+          "action_id": "publish_raw_log",
+          "confidence": 0.886,
+          "deontic": "forbidden",
+          "expectation": 0.103958,
+          "opinion": {
+            "a": 0.5,
+            "b": 0.047,
+            "d": 0.839,
+            "u": 0.114
+          },
+          "projection": "(Acceptable publish_raw_log) (STV 0.0530 0.8860)",
+          "proofs": [
+            "deontic: lib_deontic derived forbidden for publish_raw_log",
+            "belief: (: (rule-proof risk_to_accept raw_risk) (Acceptable publish_raw_log) (STV 0.053000000000000005 0.886))"
+          ],
+          "strength": 0.053
+        },
+        {
+          "action_id": "publish_redacted_summary",
+          "confidence": 0.977149,
+          "deontic": "obligated",
+          "expectation": 0.923989,
+          "opinion": {
+            "a": 0.5,
+            "b": 0.9126,
+            "d": 0.0646,
+            "u": 0.0229
+          },
+          "projection": "(Acceptable publish_redacted_summary) (STV 0.9339 0.9771)",
+          "proofs": [
+            "deontic: lib_deontic derived obligated for publish_redacted_summary",
+            "belief: (: (merge/revision (rule-proof redaction_to_accept red_redacted) (rule-proof support_to_accept red_support)) (Acceptable publish_redacted_summary) (STV 0.9339042316258351 0.9771490750816104))"
+          ],
+          "strength": 0.933904
+        },
+        {
+          "action_id": "hold_external_update",
+          "confidence": 0.812,
+          "deontic": "permitted",
+          "expectation": 0.70503,
+          "opinion": {
+            "a": 0.5,
+            "b": 0.611,
+            "d": 0.201,
+            "u": 0.188
+          },
+          "projection": "(Acceptable hold_external_update) (STV 0.7525 0.8120)",
+          "proofs": [
+            "deontic: lib_deontic derived permitted for hold_external_update",
+            "belief: (: (rule-proof protect_to_accept hold_protect) (Acceptable hold_external_update) (STV 0.7525 0.812))"
+          ],
+          "strength": 0.7525
+        }
+      ],
+      "chainer_program": "!(import! &self petta_chainer)\n!(import! &self logic_configs/pln)\n!(superpose ((compileadd gckb (: support_to_accept (Implication (Premises (SupportsCollective $x)) (Conclusions (Acceptable $x))) (STV 0.92 0.95))) (compileadd gckb (: redaction_to_accept (Implication (Premises (Redacted $x)) (Conclusions (Acceptable $x))) (STV 0.95 0.97))) (compileadd gckb (: protect_to_accept (Implication (Premises (ProtectsPrivacy $x)) (Conclusions (Acceptable $x))) (STV 0.85 0.92))) (compileadd gckb (: risk_to_accept (Implication (Premises (RisksPrivacy $x)) (Conclusions (Acceptable $x))) (STV 0.05 0.9))) (compileadd gckb (: raw_risk (RisksPrivacy publish_raw_log) (STV 0.980 0.95))) (compileadd gckb (: red_support (SupportsCollective publish_redacted_summary) (STV 0.950 0.95))) (compileadd gckb (: red_redacted (Redacted publish_redacted_summary) (STV 1.0 0.97))) (compileadd gckb (: hold_protect (ProtectsPrivacy hold_external_update) (STV 0.850 0.92)))))\n!(query 20 gckb (: $prf (Acceptable publish_raw_log) $tv))\n!(query 20 gckb (: $prf (Acceptable publish_redacted_summary) $tv))\n!(query 20 gckb (: $prf (Acceptable hold_external_update) $tv))\n",
+      "deontic_conclusions": "((nD (lit neg F none hold_external_update ())) (nD (lit neg F none publish_redacted_summary ())) (nD (lit neg O none publish_raw_log ())) (nD (lit neg P none publish_raw_log ())) (nD (lit pos F none publish_raw_log ())) (nD (lit pos O none hold_external_update ())) (nD (lit pos O none publish_redacted_summary ())) (nD (lit pos P none publish_redacted_summary ())) (nd (lit neg F none hold_external_update ())) (nd (lit pos O none hold_external_update ())) (pD (lit pos P none hold_external_update ())) (pD (lit pos none none protects (publish_redacted_summary))) (pD (lit pos none none risky (publish_raw_log))) (pd (lit neg F none publish_redacted_summary ())) (pd (lit neg O none publish_raw_log ())) (pd (lit neg P none publish_raw_log ())) (pd (lit pos F none publish_raw_log ())) (pd (lit pos O none publish_redacted_summary ())) (pd (lit pos P none hold_external_update ())) (pd (lit pos P none publish_redacted_summary ())) (pd (lit pos none none protects (publish_redacted_summary))) (pd (lit pos none none risky (publish_raw_log))))",
+      "deontic_theory": "(given (risky publish_raw_log))\n(normally rRawForbid (risky publish_raw_log) (forbidden publish_raw_log))\n(given (protects publish_redacted_summary))\n(normally rRedOblige (protects publish_redacted_summary) (must publish_redacted_summary))\n(given (may hold_external_update))\n",
+      "engine": "lib_deontic + PeTTaChainer PLN",
+      "evidence": {
+        "concept_scores": {},
+        "coordination_needed": true,
+        "facts_ready": true,
+        "mood": "declarative",
+        "privacy_at_stake": true,
+        "propositions": [],
+        "provenance": "keyword",
+        "public_declared": false,
+        "sensitive_categories": [
+          "customer emails",
+          "order IDs",
+          "request payloads",
+          "raw logs"
+        ]
+      },
+      "execution": {
+        "belief_source": "PeTTaChainer PLN contextual query on PeTTa",
+        "deontic_source": "OmegaClaw-Core lib_deontic (defeasible + SDL) on PeTTa",
+        "mode": "petta",
+        "runtime": "/home/user/Dev/PeTTa",
+        "swipl": "/home/user/Dev/swipl-9.3.33/build-petta/src/swipl"
+      },
+      "input": "evidence read from the request",
+      "raw_outputs": [
+        "Not specialized DistMap2Formula_Spec_[+]/4",
+        "Not specialized DistMapFormula_Spec_[partial(lambda_11,[_82238])]/3",
+        "true",
+        "true",
+        "(rules (((: (gckb $_144466 $_144472) $_144478 (SupportsCollective $_144496) $_144502) (CPU TotalMpConclusionFormula (gckb (SupportsCollective $_144496) (Acceptable $_144496) $_144502 (STV 0.92 0.95) (STV 0.2 0.2)) $_144652)) |- (: (gckb $_144466 $_144472) (support_to_accept $_144478) (Acceptable $_144496) $_144652)))",
+        "(rules (((: (gckb $_143932 $_143938) $_143944 (SupportsCollective #) $_143968) (: (gckb $_143932 $_143938) $_144010 (Acceptable #) $_144034) (CPU InversionFormula ($_143968 $_144034 (STV 0.92 0.95)) $_144112) (: (gckb $_143932 $_143938) $_144154 (Acceptable $_144172) $_144178) (CPU TotalMpConclusionFormula (gckb (Acceptable $_144172) (SupportsCollective $_144172) $_144178 $_144112 (STV 0.2 0.2)) $_143968)) |- (: (gckb $_143932 $_143938) ((inverted support_to_accept with $_143944 $_144010) $_144154) (SupportsCollective $_144172) $_143968)))",
+        "(rules (((: (gckb $_143608 $_143614) $_143620 (SupportsCollective $_143638) $_143644) (CPU TotalMpConclusionFormula (gckb (SupportsCollective $_143638) (Acceptable $_143638) $_143644 (STV 0.92 0.95) (STV 0.2 0.2)) $_143794)) |- (: (gckb $_143608 $_143614) (support_to_accept $_143620) (Acceptable $_143638) $_143794)))",
+        "(rules (((: (gckb $_143074 $_143080) $_143086 (SupportsCollective #) $_143110) (: (gckb $_143074 $_143080) $_143152 (Acceptable #) $_143176) (CPU InversionFormula ($_143110 $_143176 (STV 0.92 0.95)) $_143254) (: (gckb $_143074 $_143080) $_143296 (Acceptable $_143314) $_143320) (CPU TotalMpConclusionFormula (gckb (Acceptable $_143314) (SupportsCollective $_143314) $_143320 $_143254 (STV 0.2 0.2)) $_143110)) |- (: (gckb $_143074 $_143080) ((inverted support_to_accept with $_143086 $_143152) $_143296) (SupportsCollective $_143314) $_143110)))",
+        "(rules (((: (gckb $_142750 $_142756) $_142762 (Redacted $_142780) $_142786) (CPU TotalMpConclusionFormula (gckb (Redacted $_142780) (Acceptable $_142780) $_142786 (STV 0.95 0.97) (STV 0.2 0.2)) $_142936)) |- (: (gckb $_142750 $_142756) (redaction_to_accept $_142762) (Acceptable $_142780) $_142936)))",
+        "(rules (((: (gckb $_142216 $_142222) $_142228 (Redacted #) $_142252) (: (gckb $_142216 $_142222) $_142294 (Acceptable #) $_142318) (CPU InversionFormula ($_142252 $_142318 (STV 0.95 0.97)) $_142396) (: (gckb $_142216 $_142222) $_142438 (Acceptable $_142456) $_142462) (CPU TotalMpConclusionFormula (gckb (Acceptable $_142456) (Redacted $_142456) $_142462 $_142396 (STV 0.2 0.2)) $_142252)) |- (: (gckb $_142216 $_142222) ((inverted redaction_to_accept with $_142228 $_142294) $_142438) (Redacted $_142456) $_142252)))",
+        "(rules (((: (gckb $_141892 $_141898) $_141904 (Redacted $_141922) $_141928) (CPU TotalMpConclusionFormula (gckb (Redacted $_141922) (Acceptable $_141922) $_141928 (STV 0.95 0.97) (STV 0.2 0.2)) $_142078)) |- (: (gckb $_141892 $_141898) (redaction_to_accept $_141904) (Acceptable $_141922) $_142078)))",
+        "(rules (((: (gckb $_141358 $_141364) $_141370 (Redacted #) $_141394) (: (gckb $_141358 $_141364) $_141436 (Acceptable #) $_141460) (CPU InversionFormula ($_141394 $_141460 (STV 0.95 0.97)) $_141538) (: (gckb $_141358 $_141364) $_141580 (Acceptable $_141598) $_141604) (CPU TotalMpConclusionFormula (gckb (Acceptable $_141598) (Redacted $_141598) $_141604 $_141538 (STV 0.2 0.2)) $_141394)) |- (: (gckb $_141358 $_141364) ((inverted redaction_to_accept with $_141370 $_141436) $_141580) (Redacted $_141598) $_141394)))",
+        "(rules (((: (gckb $_141034 $_141040) $_141046 (ProtectsPrivacy $_141064) $_141070) (CPU TotalMpConclusionFormula (gckb (ProtectsPrivacy $_141064) (Acceptable $_141064) $_141070 (STV 0.85 0.92) (STV 0.2 0.2)) $_141220)) |- (: (gckb $_141034 $_141040) (protect_to_accept $_141046) (Acceptable $_141064) $_141220)))",
+        "(rules (((: (gckb $_140500 $_140506) $_140512 (ProtectsPrivacy #) $_140536) (: (gckb $_140500 $_140506) $_140578 (Acceptable #) $_140602) (CPU InversionFormula ($_140536 $_140602 (STV 0.85 0.92)) $_140680) (: (gckb $_140500 $_140506) $_140722 (Acceptable $_140740) $_140746) (CPU TotalMpConclusionFormula (gckb (Acceptable $_140740) (ProtectsPrivacy $_140740) $_140746 $_140680 (STV 0.2 0.2)) $_140536)) |- (: (gckb $_140500 $_140506) ((inverted protect_to_accept with $_140512 $_140578) $_140722) (ProtectsPrivacy $_140740) $_140536)))",
+        "(rules (((: (gckb $_140176 $_140182) $_140188 (ProtectsPrivacy $_140206) $_140212) (CPU TotalMpConclusionFormula (gckb (ProtectsPrivacy $_140206) (Acceptable $_140206) $_140212 (STV 0.85 0.92) (STV 0.2 0.2)) $_140362)) |- (: (gckb $_140176 $_140182) (protect_to_accept $_140188) (Acceptable $_140206) $_140362)))",
+        "(rules (((: (gckb $_139642 $_139648) $_139654 (ProtectsPrivacy #) $_139678) (: (gckb $_139642 $_139648) $_139720 (Acceptable #) $_139744) (CPU InversionFormula ($_139678 $_139744 (STV 0.85 0.92)) $_139822) (: (gckb $_139642 $_139648) $_139864 (Acceptable $_139882) $_139888) (CPU TotalMpConclusionFormula (gckb (Acceptable $_139882) (ProtectsPrivacy $_139882) $_139888 $_139822 (STV 0.2 0.2)) $_139678)) |- (: (gckb $_139642 $_139648) ((inverted protect_to_accept with $_139654 $_139720) $_139864) (ProtectsPrivacy $_139882) $_139678)))",
+        "(rules (((: (gckb $_139318 $_139324) $_139330 (RisksPrivacy $_139348) $_139354) (CPU TotalMpConclusionFormula (gckb (RisksPrivacy $_139348) (Acceptable $_139348) $_139354 (STV 0.05 0.9) (STV 0.2 0.2)) $_139504)) |- (: (gckb $_139318 $_139324) (risk_to_accept $_139330) (Acceptable $_139348) $_139504)))",
+        "(rules (((: (gckb $_138784 $_138790) $_138796 (RisksPrivacy #) $_138820) (: (gckb $_138784 $_138790) $_138862 (Acceptable #) $_138886) (CPU InversionFormula ($_138820 $_138886 (STV 0.05 0.9)) $_138964) (: (gckb $_138784 $_138790) $_139006 (Acceptable $_139024) $_139030) (CPU TotalMpConclusionFormula (gckb (Acceptable $_139024) (RisksPrivacy $_139024) $_139030 $_138964 (STV 0.2 0.2)) $_138820)) |- (: (gckb $_138784 $_138790) ((inverted risk_to_accept with $_138796 $_138862) $_139006) (RisksPrivacy $_139024) $_138820)))",
+        "(rules (((: (gckb $_138460 $_138466) $_138472 (RisksPrivacy $_138490) $_138496) (CPU TotalMpConclusionFormula (gckb (RisksPrivacy $_138490) (Acceptable $_138490) $_138496 (STV 0.05 0.9) (STV 0.2 0.2)) $_138646)) |- (: (gckb $_138460 $_138466) (risk_to_accept $_138472) (Acceptable $_138490) $_138646)))",
+        "(rules (((: (gckb $_137926 $_137932) $_137938 (RisksPrivacy #) $_137962) (: (gckb $_137926 $_137932) $_138004 (Acceptable #) $_138028) (CPU InversionFormula ($_137962 $_138028 (STV 0.05 0.9)) $_138106) (: (gckb $_137926 $_137932) $_138148 (Acceptable $_138166) $_138172) (CPU TotalMpConclusionFormula (gckb (Acceptable $_138166) (RisksPrivacy $_138166) $_138172 $_138106 (STV 0.2 0.2)) $_137962)) |- (: (gckb $_137926 $_137932) ((inverted risk_to_accept with $_137938 $_138004) $_138148) (RisksPrivacy $_138166) $_137962)))",
+        "(: (gckb MAIN Nil) raw_risk (RisksPrivacy publish_raw_log) (STV 0.98 0.95))",
+        "(: (gckb MAIN Nil) red_support (SupportsCollective publish_redacted_summary) (STV 0.95 0.95))",
+        "(: (gckb MAIN Nil) red_redacted (Redacted publish_redacted_summary) (STV 1.0 0.97))",
+        "(: (gckb MAIN Nil) hold_protect (ProtectsPrivacy hold_external_update) (STV 0.85 0.92))",
+        "(: (rule-proof risk_to_accept raw_risk) (Acceptable publish_raw_log) (STV 0.053000000000000005 0.886))",
+        "(: (merge/revision (rule-proof redaction_to_accept red_redacted) (rule-proof support_to_accept red_support)) (Acceptable publish_redacted_summary) (STV 0.9339042316258351 0.9771490750816104))",
+        "(: (rule-proof protect_to_accept hold_protect) (Acceptable hold_external_update) (STV 0.7525 0.812))"
+      ],
+      "source": "omega-core-petta-lib-deontic-pettachainer"
+    },
+    "structured_english": [
+      "Raw incident logs contain customer emails.",
+      "Raw incident logs contain order IDs.",
+      "Raw incident logs contain request payloads.",
+      "Publishing raw incident logs exposes identifiable user data.",
+      "The redacted summary protects privacy.",
+      "The redacted summary supports responders.",
+      "Holding the external update protects privacy.",
+      "Security review happens before verified customer update."
+    ],
+    "structured_english_prompt": "Rewrite the natural-language request into clear structured English propositions before tool use.\nWrite one proposition per sentence.\nUse one concrete subject, one predicate, and one object or complement.\nAvoid pronouns and vague references.\nPreserve domain terms from the request.\nKeep observations, norms, and recommendations in separate propositions.\nSend the propositions to HyperBase first, then send the HyperBase projection to the native MeTTa/NAL reasoner."
+  },
+  "motivation": {
+    "candidates": [
+      {
+        "corr": [
+          -1.0,
+          1.0,
+          1.0
+        ],
+        "id": "publish_raw_log",
+        "risk": 0.947
+      },
+      {
+        "corr": [
+          1.0,
+          0.9,
+          0.7
+        ],
+        "id": "publish_redacted_summary",
+        "risk": 0.066
+      },
+      {
+        "corr": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "id": "hold_external_update",
+        "risk": 0.248
+      }
+    ],
+    "collective_goals": [
+      0.0,
+      1.0,
+      1.0
+    ],
+    "consensus": "publish_redacted_summary",
+    "consensus_scores": {
+      "hold_external_update": 0.0020000000000000018,
+      "publish_raw_log": -1.197,
+      "publish_redacted_summary": 1.084
+    },
+    "engine": "MetaMo consensusAction (OpenPsi/MAGUS) on PeTTa",
+    "goal_pull": {
+      "collective": "publish_raw_log",
+      "individual": "publish_redacted_summary"
+    },
+    "individual_goals": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "subsystem_preference": {
+      "collective": "publish_redacted_summary",
+      "individual": "publish_redacted_summary"
+    }
+  },
+  "notes": [
+    "The raw log advances coordination but is blocked by the derived privacy prohibition.",
+    "The redacted summary satisfies all required goals and is the recommended action.",
+    "The hold protects privacy but misses the required collective goals."
+  ],
+  "runtime": {
+    "reasoner": "omega-core-petta-lib-deontic-pettachainer"
+  },
+  "scenario": "Incident response with individual privacy and collective repair goals"
+}

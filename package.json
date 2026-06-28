@@ -1,0 +1,34 @@
+{
+  "name": "goalchainer-ts",
+  "version": "0.1.0",
+  "description": "Goal-aware agent decision layer, ported to TypeScript and running its reasoning on @metta-ts (pure-TypeScript MeTTa). Weighs individual goals, collective goals, deontic norms, and graded evidence before an agent acts.",
+  "type": "module",
+  "license": "MIT",
+  "author": "MesTTo",
+  "bin": {
+    "goalchainer-ts": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src/metta"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "cli": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@metta-ts/core": "^1.0.1",
+    "@metta-ts/hyperon": "^1.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

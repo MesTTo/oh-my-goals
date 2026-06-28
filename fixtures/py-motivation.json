@@ -1,0 +1,56 @@
+{
+  "candidates": [
+    {
+      "corr": [
+        -1.0,
+        1.0,
+        1.0
+      ],
+      "id": "publish_raw_log",
+      "risk": 0.947
+    },
+    {
+      "corr": [
+        1.0,
+        0.9,
+        0.7
+      ],
+      "id": "publish_redacted_summary",
+      "risk": 0.066
+    },
+    {
+      "corr": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "id": "hold_external_update",
+      "risk": 0.248
+    }
+  ],
+  "collective_goals": [
+    0.0,
+    1.0,
+    1.0
+  ],
+  "consensus": "publish_redacted_summary",
+  "consensus_scores": {
+    "hold_external_update": 0.0020000000000000018,
+    "publish_raw_log": -1.197,
+    "publish_redacted_summary": 1.084
+  },
+  "engine": "MetaMo consensusAction (OpenPsi/MAGUS) on PeTTa",
+  "goal_pull": {
+    "collective": "publish_raw_log",
+    "individual": "publish_redacted_summary"
+  },
+  "individual_goals": [
+    1.0,
+    0.0,
+    0.0
+  ],
+  "subsystem_preference": {
+    "collective": "publish_redacted_summary",
+    "individual": "publish_redacted_summary"
+  }
+}
