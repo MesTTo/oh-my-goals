@@ -7,6 +7,7 @@ import { buildHyperbasePacket, type HyperbasePacket } from "./hyperbase.js";
 import { HyperBaseMettaReasoner } from "./reasoner.js";
 import { consensusDecision, type MotivationResult } from "./motivation.js";
 import { DecisionEngine } from "./score.js";
+import type { OntologyContext } from "./ontology.js";
 import type { Decision, GoalScenario } from "./models.js";
 
 export interface GoalChainerRun {
@@ -17,9 +18,9 @@ export interface GoalChainerRun {
   decisions: Decision[];
 }
 
-export function runGoalChainer(request: string): GoalChainerRun {
+export function runGoalChainer(request: string, ontology?: OntologyContext | null): GoalChainerRun {
   const scenario = incidentResponseScenario(request);
-  const packet = buildHyperbasePacket(request);
+  const packet = buildHyperbasePacket(request, ontology);
   const reasoner = new HyperBaseMettaReasoner(packet.reasoner);
   const strengthByAction: Record<string, number> = {};
   for (const action of scenario.actions) {

@@ -64,10 +64,12 @@ deontic-gated score. The forbidden action is forced negative; the obligated acti
 that satisfies every required goal wins.
 
 ```bash
-npm run cli -- validate     # the differential battery: same code, three requests, three verdicts
-npm run cli -- snars        # the subjective-logic deduction
-npm run cli -- motivation   # the individual-vs-collective consensus
-npm run cli -- directive    # the decision as a claimable task
+npm run cli -- demo           # the full decision: ranked actions, why, motivation, propositions, ontology
+npm run cli -- validate       # the differential battery: same code, three requests, three verdicts
+npm run cli -- snars          # the subjective-logic deduction
+npm run cli -- motivation     # the individual-vs-collective consensus
+npm run cli -- directive      # the decision as a claimable task
+npm run cli -- codebase-demo  # generate a buggy TS repo, reason over it, patch it, rerun its tests
 ```
 
 The library surface:
@@ -107,11 +109,15 @@ the ranked scores (`redacted 0.986774`, `raw -1.0`), and the leak check. The onl
 fields that differ are the runtime labels: this port honestly says `@metta-ts`
 where the Python said `PeTTa`.
 
-Two things are not ported. The `lib_directive` plan lifecycle (status / next /
-claim) is a separate Prolog kernel; the `gc_task_state` deontic-to-task mapping
-runs on `@metta-ts`, but the plan execution is reimplemented deterministically. The
-COLORE ontology and HyperBase proposition rendering used only by the richer `demo`
-output are not included.
+The COLORE ontology context, the HyperBase proposition rendering, the rich `demo`
+output, and the `codebase-demo` repair workflow are all ported. The `codebase-demo`
+is a pure-TypeScript reimplementation: it generates a TypeScript repo with the same
+seeded leak and the same policy docs, runs its tests with Node, reasons over it, and
+patches it, so the reasoning shape matches the Python while the generated code is
+TypeScript. Still on the Python side only: the Ollama semantic-evidence path
+(environment-gated; the keyword extractor is the default in both), and the
+`lib_directive` plan lifecycle (status / next / claim), whose `gc_task_state`
+mapping runs on `@metta-ts` while the plan execution is reimplemented.
 
 ## Develop
 

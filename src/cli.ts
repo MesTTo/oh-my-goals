@@ -4,6 +4,7 @@ import { runValidation } from "./validate.js";
 import { solveIncident } from "./pipeline.js";
 import { deriveIncident } from "./snars.js";
 import { runDirective } from "./directive.js";
+import { runCodebaseDemo } from "./codebase_demo.js";
 import { runMotivation, runDecision } from "./cli_support.js";
 import { DEFAULT_INCIDENT_REQUEST } from "./scenarios.js";
 
@@ -58,9 +59,12 @@ export function main(argv: string[]): number {
     case "demo":
       console.log(sortedJson(runDecision(request)));
       return 0;
+    case "codebase-demo":
+      console.log(sortedJson(runCodebaseDemo(request === DEFAULT_INCIDENT_REQUEST ? "" : request)));
+      return 0;
     default:
       console.error(
-        "usage: goalchainer-ts <validate|solve|snars|motivation|directive|decision> [--request <text>] [--json]",
+        "usage: goalchainer-ts <validate|solve|snars|motivation|directive|decision|codebase-demo> [--request <text>] [--json]",
       );
       return 2;
   }

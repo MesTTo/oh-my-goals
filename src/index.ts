@@ -18,7 +18,10 @@ export { runGoalChainer } from "./core.js";
 export { solveIncident } from "./pipeline.js";
 export { runValidation } from "./validate.js";
 export { runDirective, registerDirective } from "./directive.js";
+export { runCodebaseDemo } from "./codebase_demo.js";
 export { runMotivation, runDecision } from "./cli_support.js";
+export { loadColoreContext } from "./ontology.js";
+export { buildHyperbasePacket, incidentPropositions, makeProposition } from "./hyperbase.js";
 export { explainDecisions } from "./explain.js";
 export { defaultIncident, executeAction, redact, type Incident } from "./execute.js";
 

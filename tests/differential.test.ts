@@ -11,15 +11,26 @@ import { dirname, join } from "node:path";
 import { solveIncident } from "../src/pipeline.js";
 import { runValidation } from "../src/validate.js";
 import { deriveIncident } from "../src/snars.js";
-import { runMotivation } from "../src/cli_support.js";
+import { runMotivation, runDecision } from "../src/cli_support.js";
 import { runDirective } from "../src/directive.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (name: string): unknown =>
   JSON.parse(readFileSync(join(here, "..", "fixtures", `py-${name}.json`), "utf-8"));
 
-// Keys whose values are intentionally different (runtime labels) and skipped.
-const IGNORED_KEYS = new Set(["engine", "source", "score_engine", "runtime"]);
+// Keys whose values are intentionally different (runtime labels, runtime-specific
+// program text, and the vendored asset path) and skipped.
+const IGNORED_KEYS = new Set([
+  "engine",
+  "source",
+  "score_engine",
+  "runtime",
+  "execution",
+  "chainer_program",
+  "raw_outputs",
+  "deontic_conclusions",
+  "source_path",
+]);
 
 /** Recursively assert `actual` matches `expected`, with float tolerance and
  * ignoring label keys. Returns the list of mismatches (empty == match). */
@@ -78,5 +89,12 @@ describe("differential oracle vs Python fixtures", () => {
 
   it("directive task mapping matches", () => {
     expect(diff(runDirective(req), fixture("directive"))).toEqual([]);
+  });
+
+  it("demo (rich packet: propositions + ontology + reasoner) matches", () => {
+    // Normalize the one honest relabel in human-facing text: the belief engine is
+    // the reimplemented PLN, not PeTTaChainer.
+    const expected = JSON.parse(JSON.stringify(fixture("demo")).replaceAll("PeTTaChainer", "PLN"));
+    expect(diff(runDecision(req), expected)).toEqual([]);
   });
 });

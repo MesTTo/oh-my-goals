@@ -74,6 +74,7 @@ const PLN_ENGINE = `
 export function gradeBeliefs(evidence: IncidentEvidence): {
   beliefs: Record<string, Belief>;
   program: string;
+  rawOutputs: string[];
 } {
   const facts = factsFor(evidence);
   const ruleLines = Object.entries(RULES).map(
@@ -107,5 +108,5 @@ export function gradeBeliefs(evidence: IncidentEvidence): {
     const proof = `(: ${proofTerm} (Acceptable ${action}) (STV ${tv[0]} ${tv[1]}))`;
     beliefs[action] = { strength: tv[0], confidence: tv[1], proof };
   });
-  return { beliefs, program };
+  return { beliefs, program, rawOutputs: groups.flat() };
 }

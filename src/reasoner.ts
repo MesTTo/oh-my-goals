@@ -10,7 +10,7 @@ import { deriveDeontic, ACTION_ORDER } from "./deontic.js";
 import { gradeBeliefs, type Belief } from "./pln.js";
 import { nalExpectation, slOpinion } from "./truth.js";
 import { round6, roundN, type CandidateAction, type EvidenceProjection } from "./models.js";
-import type { IncidentEvidence } from "./evidence.js";
+import { evidenceToDict, type IncidentEvidence } from "./evidence.js";
 
 export const NATIVE_REASONER_SOURCE = "omega-core-metta-ts-lib-deontic-pln";
 
@@ -59,22 +59,35 @@ function actionRows(
 export interface HyperbaseReasonResult {
   source: string;
   engine: string;
+  execution: Record<string, string>;
+  input: string;
   evidence: Record<string, unknown>;
   deontic_theory: string;
   deontic_conclusions: string;
+  chainer_program: string;
+  raw_outputs: string[];
   action_evidence: ActionEvidenceRow[];
 }
 
 /** Run the deontic engine and PLN over request-derived premises, on @metta-ts. */
 export function reasonOverHyperbase(evidence: IncidentEvidence): HyperbaseReasonResult {
   const deontic = deriveDeontic(evidence);
-  const { beliefs } = gradeBeliefs(evidence);
+  const { beliefs, program, rawOutputs } = gradeBeliefs(evidence);
   return {
     source: NATIVE_REASONER_SOURCE,
     engine: "lib_deontic + PLN",
-    evidence: {},
+    execution: {
+      mode: "metta-ts",
+      runtime: "@metta-ts",
+      deontic_source: "OmegaClaw-Core lib_deontic (defeasible + SDL), reimplemented on @metta-ts",
+      belief_source: "PLN contextual query on @metta-ts",
+    },
+    input: "evidence read from the request",
+    evidence: evidenceToDict(evidence),
     deontic_theory: deontic.theory,
     deontic_conclusions: deontic.conclusions,
+    chainer_program: program,
+    raw_outputs: rawOutputs,
     action_evidence: actionRows(deontic.statusByAction, beliefs),
   };
 }
