@@ -1,143 +1,199 @@
 # goalchainer-ts
 
-GoalChainer is a goal-aware decision layer for an agent. Before the agent acts,
-it weighs the individual's goal, the collective's goal, the deontic norms, and the
-graded evidence, then ranks the actions. This is the TypeScript port, and its
-reasoning runs on [`@metta-ts`](https://www.npmjs.com/package/@metta-ts/core), a
-pure-TypeScript MeTTa (Hyperon) interpreter. No SWI-Prolog, no Python, no native
-addon. It runs anywhere TypeScript runs.
+GoalChainer ranks actions against explicit goals, policy norms, and graded evidence before an agent acts. The decision rules run on [MeTTa-TS](https://github.com/MesTTo/Meta-TypeScript-Talk). The package accepts caller-supplied structured data and has no built-in scenario or action handlers.
 
-The MeTTa-TS runtime it runs on: <https://github.com/MesTTo/Meta-TypeScript-Talk>
+## Install
 
-## The scenario, run
+Node.js 20 or newer is required.
+The JavaScript entry point is ESM-only. CommonJS callers must use dynamic `import()`.
 
-Checkout is down. The on-call engineers want to paste the raw production logs into
-the public incident channel so everyone can debug. The collective goal (fix it
-fast, coordinate) says share everything. But those logs carry customer emails,
-order IDs, and tokens, and the individual's goal (privacy) plus a norm say don't.
+Until the package is published to npm, install a verified tarball from a checkout:
 
 ```bash
-npm install
-npm run cli -- solve
+cd /path/to/goalchainer-ts
+npm ci
+npm run verify
+mkdir -p ai-tmp
+npm pack --pack-destination ai-tmp
+
+cd /path/to/consumer-project
+npm install /path/to/goalchainer-ts/ai-tmp/goalchainer-ts-0.1.0.tgz
+npx --no-install goalchainer --help
 ```
 
+After publication, consumers can use `npm install goalchainer-ts`.
+
+SWI-Prolog is optional. It is used only when you call the live Prolog interoperability checks.
+
+## Decide from JSON
+
+The [complete input schema](skills/goalchainer/references/input-schema.md) lists every field and default. CLI input is limited to 2 MiB.
+
+Write a scenario with goals, norms, actions, and any grounded evidence:
+
+```json
+{
+  "scenario": {
+    "title": "Choose a change strategy",
+    "goals": [
+      {
+        "id": "preserve-behavior",
+        "owner": "maintainers",
+        "statement": "Keep the documented behavior unchanged",
+        "weight": 1,
+        "kind": "collective",
+        "required": true
+      },
+      {
+        "id": "limit-risk",
+        "owner": "operator",
+        "statement": "Limit the chance of an unsafe rollout",
+        "weight": 0.9,
+        "kind": "individual",
+        "required": true
+      }
+    ],
+    "norms": [
+      {
+        "id": "no-unverified-change",
+        "mode": "forbid",
+        "targetAction": "apply-unverified-change",
+        "reason": "The change has no passing verification result",
+        "priority": 10
+      }
+    ],
+    "actions": [
+      {
+        "id": "apply-verified-change",
+        "label": "Apply the verified change",
+        "description": "Apply the change whose focused and regression checks pass",
+        "satisfies": ["preserve-behavior", "limit-risk"]
+      },
+      {
+        "id": "apply-unverified-change",
+        "label": "Apply the unverified change",
+        "description": "Apply the change before verification",
+        "satisfies": ["preserve-behavior"]
+      }
+    ]
+  },
+  "evidence": {
+    "apply-verified-change": {
+      "strength": 0.9,
+      "confidence": 0.95,
+      "source": "caller calibration: 9 of 10 required checks passed with 95% check coverage"
+    }
+  }
+}
 ```
-SOLVE: decided publish_redacted_summary (recommended), channel external
-  blocked:     publish_raw_log  (lib_deontic: forbidden)
-  individual -> publish_redacted_summary ; collective -> publish_raw_log
-  consensus (MetaMo): publish_redacted_summary
-  redacted: customer_email, order_id, request_payload, access_token, stack_trace
-  kept: error_code=PAYMENT_TIMEOUT
-  leak check: safe=true leaked=[]
-```
 
-The agent does not stop at a verdict. It runs the chosen action on the real
-incident log (`ava@example.com`, `tok_live_secret`, `ORD-19942`, a stack trace),
-produces the artifact it would actually send (every restricted value replaced with
-`[redacted]`, the operational `PAYMENT_TIMEOUT` kept), and a leak check scans the
-output for those exact values. None survive.
+In the example, strength comes from the observed pass ratio and confidence comes
+from the caller's measured coverage. Do not copy these values for an uncalibrated
+test result.
 
-## How the reasoning works
-
-Five steps, each derived from the request so the decision is a function of the
-input, not a fixed answer:
-
-1. **Evidence.** Read decision-relevant signals off the request (which sensitive
-   categories are present, whether the data is declared public, whether the facts
-   are ready).
-2. **Deontic verdict.** A defeasible-deontic micro-engine derives each action's
-   forbidden / obligated / permitted status. The request's evidence becomes a
-   theory of `given` facts and defeasible `normally` rules; a rule fires its
-   deontic head when its body is given; forbidden dominates obligated dominates
-   permitted.
-3. **Graded belief (PLN).** A PLN contextual query grades how strongly each action
-   is believed acceptable. Per-action facts are matched to implication rules, each
-   modus-ponens step is deduced, and multiple supporting facts are merged by
-   revision, returning a strength and confidence with a proof term.
-4. **Subjective-logic opinion (SNARS).** The key claim ("the raw log is forbidden")
-   is deduced as a subjective-logic opinion `(b, d, u, a)` from evidence, with a
-   provenance receipt.
-5. **Individual vs collective (MetaMo).** Each goal owner is a motivation
-   subsystem. The consensus picks the action both can accept, penalising
-   disagreement: `consensus = (scoreI + scoreC)/2 - 0.25*|scoreI - scoreC|`.
-
-The deontic verdict, the graded belief, and the consensus combine into a ranked,
-deontic-gated score. The forbidden action is forced negative; the obligated action
-that satisfies every required goal wins.
+Run the decision gate:
 
 ```bash
-npm run cli -- demo           # the full decision: ranked actions, why, motivation, propositions, ontology
-npm run cli -- validate       # the differential battery: same code, three requests, three verdicts
-npm run cli -- snars          # the subjective-logic deduction
-npm run cli -- motivation     # the individual-vs-collective consensus
-npm run cli -- directive      # the decision as a claimable task
-npm run cli -- codebase-demo  # generate a buggy TS repo, reason over it, patch it, rerun its tests
+npx --no-install goalchainer decide --input scenario.json --pretty
 ```
 
-The library surface:
+Use `--input -` to read JSON from stdin. Unknown fields, duplicate IDs, invalid probabilities, and dangling goal or action references are rejected with exit code 2. A valid decision writes JSON to stdout. Runtime failures use exit code 1.
+
+The receipt identifies the selected action and includes the complete scenario declaration plus every ranked decision. The declaration retains goals, norms, actions, and notes so the score can be audited after a temporary input is removed. Decision scores retain full precision so threshold statuses can be replayed. `selection_tied`, `tied_actions`, and `automatic_execution_allowed` prevent an input-order tie from becoming an automatic action. The motivation audit retains the effective correlations, risks, subsystem vectors, and consensus scores. Each decision row contains its score, deontic status and reasons, satisfied goals, missing required goals, evidence projection, warnings, and provenance metadata. `forbidden` and `conflict` results are always blocked.
+
+The motivation path computes `0.54 * normalized_motivation + 0.38 * strength * confidence`, plus `0.1` for an obligation. Motivation uses min-max normalization across the candidate consensus values. Equal positive values normalize to `1`. An entirely nonpositive vector normalizes to `0` so negative consensus cannot become recommendation support. When motivation is disabled, the score is `0.42 * goal_coverage + 0.38 * strength * confidence + 0.12 * min(individual_coverage, collective_coverage)`, plus the same obligation bonus. Blocked decisions have score `-1`. Other decisions are `recommended` at score `0.72` or higher with no missing required goal, `candidate` at score `0.5` or higher, and `weak` below `0.5`.
+
+Do not put credentials, tokens, private keys, or unredacted sensitive data in the input. The receipt repeats scenario text and evidence provenance on stdout.
+
+## TypeScript API
 
 ```ts
-import { solveIncident, runValidation, skill } from "goalchainer-ts";
+import {
+  GoalChainer,
+  executeDecision,
+  explainDecisions,
+  goalChainerRunToJson,
+} from "goalchainer-ts";
 
-solveIncident("...the request...");   // decide + execute + leak check
-runValidation();                      // the input-sensitivity battery
-skill.decision("...the request...");  // the short OmegaClaw skill reply
+const chainer = new GoalChainer();
+const run = chainer.evaluate(input);
+
+console.log(goalChainerRunToJson(run));
+console.log(explainDecisions(run.decisions).join("\n"));
+
+if (run.automaticExecutionAllowed && actionIsAvailable && userAlreadyAuthorizedIt) {
+  await executeDecision(run.selected, context, {
+    "apply-verified-change": async (value) => applyChange(value),
+  });
+}
 ```
 
-## What runs on @metta-ts, precisely
+`GoalChainer` validates unknown input at the boundary. `evaluateScenario` accepts a validated scenario and a custom evidence reasoner. `StaticEvidenceReasoner` reads explicit evidence and action defaults. `PlnEvidenceReasoner` projects beliefs from the generic PLN engine. `ContextualQueryEvidenceReasoner` passes each action's `evidenceQuery` and `evidenceAtoms` to a caller-injected synchronous adapter. Nonempty `evidenceAtoms` require a nonempty `evidenceQuery`. The `decide` CLI and `runGoalChainer` use static evidence and reject nonempty contextual declarations instead of ignoring them.
 
-This is a behaviour-faithful reimplementation, not a lift of the original engines.
-The original GoalChainer ran four reasoning systems on PeTTa (MeTTa compiled to
-SWI-Prolog): OmegaClaw-Core's `lib_deontic`, PeTTaChainer's PLN, a SNARS kernel,
-and MetaMo. Three of those are bound to PeTTa's host: `lib_deontic`'s engine is a
-set of SWI-Prolog kernels registered as MeTTa functions, and MetaMo imports a
-Python helper. None of that runs on a pure-TypeScript runtime.
+Omitted evidence uses a neutral strength of `0.5` with confidence `0`. It cannot
+produce a recommendation by itself. `executeDecision` enforces the blocked-action
+boundary. Automatic callers should require `automaticExecutionAllowed`; a top-score
+tie leaves it false even when each tied action is individually `recommended`.
+Scores within `1e-12` are treated as tied so binary64 rounding cannot authorize an
+arbitrary winner.
 
-So each engine is reimplemented natively for `@metta-ts`, driven through the typed
-`@metta-ts/edsl` API. There are no MeTTa source strings and no output parsing: the
-engines build atoms with `rel`/`S`/`v`, add them to the space, fire rules with
-`match`, and read typed results back. The reasoning runs on the interpreter, and so
-does the arithmetic: the PLN truth formulas (deduction, count-space K=800 revision),
-the subjective-logic mapping, the MetaMo consensus, the NAL expectation, and the
-combined score are all built as engine arithmetic (`add`/`sub`/`mul`/`div`, with
-`min` as a branch) and evaluated by `@metta-ts`, not computed in TypeScript. The
-deontic dominance fold and the argmax selections stay in TypeScript because they are
-control flow, not math. There is no fallback path: the score runs on the engine in
-both modes, and the COLORE context reads its vendored data directly.
+The lower-level API also exports:
 
-The result is checked against the original. `fixtures/py-*.json` are the real
-outputs of the Python GoalChainer, and `tests/differential.test.ts` asserts this
-port reproduces them value-for-value: the PLN strengths bit-for-bit
-(`0.9339042316258351`), the SNARS opinion (`b=0.669421`, expectation `0.834711`),
-the MetaMo consensus (`publish_redacted_summary 1.084`, `publish_raw_log -1.197`),
-the ranked scores (`redacted 0.986774`, `raw -1.0`), and the leak check. The only
-fields that differ are the runtime labels: this port honestly says `@metta-ts`
-where the Python said `PeTTa`.
+- `resolveNorms` and `resolveNormsBatch` for priority-aware deontic resolution.
+- `scoreActions` and `decideActions` for the MeTTa-TS score and status rules.
+- `gradeBeliefs` for PLN deduction and count-space revision.
+- `consensusDecision` for individual and collective goal reconciliation with caller-supplied correlations and risks.
+- `assess` and `derive` for SNARS subjective-logic receipts.
+- `createDirectivePlan` and `DirectiveLifecycle` for ordered task status, assignment, and instance-local atomic claims.
+- `makeProposition` and `buildHyperbasePacket` for structured propositions and Semantic-Hypergraph facts.
+- `loadColoreContext` for the packaged COLORE ontology context. An explicit source takes precedence over `GOALCHAINER_COLORE_PATH`.
+- `redactRecord`, `detectLeaks`, and `executeDecision` for caller-owned execution boundaries.
 
-The COLORE ontology context, the HyperBase proposition rendering, the rich `demo`
-output, and the `codebase-demo` repair workflow are all ported. The `codebase-demo`
-is a pure-TypeScript reimplementation: it generates a TypeScript repo with the same
-seeded leak and the same policy docs, runs its tests with Node, reasons over it, and
-patches it, so the reasoning shape matches the Python while the generated code is
-TypeScript. Still on the Python side only: the Ollama semantic-evidence path
-(environment-gated; the keyword extractor is the default in both), and the
-`lib_directive` plan lifecycle (status / next / claim), whose `gc_task_state`
-mapping runs on `@metta-ts` while the plan execution is reimplemented.
+## Coding-agent skill
 
-## Develop
+The package ships one [Agent Skills](https://agentskills.io/specification) definition and materializes the same files into each tool's supported location.
 
 ```bash
-npm install
-npm test          # differential oracle + per-engine unit tests
-npm run build     # tsc -> dist
-npx jscpd src     # 0 clones
+npx --no-install goalchainer install-skill --agent codex --scope project
+npx --no-install goalchainer install-skill --agent claude --scope project
+npx --no-install goalchainer install-skill --agent opencode --scope project
 ```
 
-## Links
+Use `--agent all` to install the shared `.agents/skills` layout used by Codex and OpenCode plus the `.claude/skills` layout used by Claude Code. Use `--agent opencode` when you specifically want `.opencode/skills` instead. User installs target the corresponding directories under your home directory. Existing differing files or modes are never replaced unless you pass `--force`.
 
-- MeTTa-TS, the pure-TypeScript MeTTa runtime: <https://github.com/MesTTo/Meta-TypeScript-Talk>
-- The original GoalChainer (on PeTTa, with the real OmegaClaw engines): <https://github.com/MesTTo/OmegaClaw-GoalChainer>
+OpenCode also scans `.claude/skills`. In a project installed with `--agent all`,
+OpenCode may log a duplicate-name warning for the two identical copies. Install
+only the target you use when you want one discovery entry.
+
+The skill tells the coding agent to derive structured input from the current task, keep goals, norms, and evidence calibration attributable to the user or repository, call the JSON CLI, and stop unless automatic execution is allowed. It does not call a hosted model or read authentication state.
+
+## MeTTa and Prolog
+
+The deontic, scoring, motivation, PLN, SNARS, and directive rules run on `@metta-ts` 1.1.3. TypeScript handles validation, filesystem access, process I/O, and caller-owned executor dispatch.
+
+The package also includes `assets/gc_score.pl` and `assets/gc_directive.pl`. Their relations are imported through `@metta-ts/prolog`, then compared with the native MeTTa-TS rules:
+
+```bash
+npx --no-install goalchainer prolog-check --pretty
+```
+
+The command starts the local `swipl` executable, runs both parity checks, disposes the bridge, and exits nonzero if a relation differs.
+
+ProbMeTTa is not bundled. Its current library targets PeTTa, which compiles MeTTa programs to SWI-Prolog, while `@metta-ts/prolog` imports named Prolog relations into MeTTa-TS. A future probabilistic evidence reasoner can implement the existing `EvidenceReasoner` contract with native MeTTa-TS rules and BDD weighted model counting. A PeTTa-backed adapter would remain optional and would need an explicit compilation boundary rather than being loaded as a MeTTa-TS library.
+
+## Development
+
+```bash
+npm ci
+npm test
+npm run build
+npm run test:package
+```
+
+`npm run test:package` cleans the build output, packs the npm tarball from copied live sources, installs it into an isolated consumer, and checks the public API, CLI, assets, and Agent Skill.
 
 ## License
 
-MIT.
+The original package code and documentation are MIT licensed. The packaged COLORE
+ontology data is CC BY-SA 4.0. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and license scope.

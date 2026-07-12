@@ -1,38 +1,63 @@
 {
   "name": "goalchainer-ts",
   "version": "0.1.0",
-  "description": "Goal-aware agent decision layer, ported to TypeScript and running its reasoning on @metta-ts (pure-TypeScript MeTTa). Weighs individual goals, collective goals, deontic norms, and graded evidence before an agent acts.",
+  "description": "Goal-aware TypeScript decision framework on MeTTa-TS with deontic norms, graded evidence, task directives, and Agent Skill integration.",
   "type": "module",
-  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "license": "SEE LICENSE IN THIRD_PARTY_NOTICES.md",
   "author": "MesTTo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MesTTo/goalchainer-ts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MesTTo/goalchainer-ts/issues"
+  },
+  "homepage": "https://github.com/MesTTo/goalchainer-ts#readme",
+  "engines": {
+    "node": ">=20"
+  },
   "bin": {
+    "goalchainer": "./dist/cli.js",
     "goalchainer-ts": "./dist/cli.js"
   },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "import": "./dist/index.js"
     }
   },
   "files": [
     "dist",
-    "src/metta"
+    "assets/*",
+    "skills/goalchainer",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "clean": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "postbuild": "node --eval \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
     "cli": "tsx src/cli.ts",
     "test": "vitest run",
+    "test:package": "node tests/package-smoke.mjs",
+    "verify": "npm test && npm run build && npm run test:package",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run verify",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@metta-ts/core": "^1.0.1",
-    "@metta-ts/edsl": "^1.0.1",
-    "@metta-ts/hyperon": "^1.0.1"
+    "@metta-ts/core": "1.1.3",
+    "@metta-ts/edsl": "1.1.3",
+    "@metta-ts/hyperon": "1.1.3",
+    "@metta-ts/prolog": "1.1.3",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vite": "6.4.3",
+    "vitest": "4.1.10"
   }
 }

@@ -1,32 +1,22 @@
-// goalchainer-ts: a goal-aware agent decision layer whose reasoning runs on
-// @metta-ts (pure-TypeScript MeTTa). Public API.
+// Public framework API.
 
 export * from "./models.js";
-export { extractEvidence, privacyAtStake, evidenceToDict, type IncidentEvidence } from "./evidence.js";
-export { incidentScenario, incidentResponseScenario, DEFAULT_INCIDENT_REQUEST } from "./scenarios.js";
-
-// Reasoning engines on @metta-ts
-export { deriveDeontic, buildTheory, ACTION_ORDER, type DeonticResult } from "./deontic.js";
-export { gradeBeliefs, type Belief } from "./pln.js";
-export { derive, deriveIncident } from "./snars.js";
-export { consensusDecision, motivationSummary, type MotivationResult } from "./motivation.js";
-export { reasonOverHyperbase, HyperBaseMettaReasoner } from "./reasoner.js";
-
-// Decision + execution
-export { DecisionEngine } from "./score.js";
-export { runGoalChainer } from "./core.js";
-export { solveIncident } from "./pipeline.js";
-export { runValidation } from "./validate.js";
-export { runDirective, registerDirective } from "./directive.js";
-export { runCodebaseDemo } from "./codebase_demo.js";
-export { runMotivation, runDecision } from "./cli_support.js";
-export { loadColoreContext } from "./ontology.js";
-export { buildHyperbasePacket, incidentPropositions, makeProposition } from "./hyperbase.js";
-export { explainDecisions } from "./explain.js";
-export { defaultIncident, executeAction, redact, type Incident } from "./execute.js";
-
-// Engine helpers (the typed @metta-ts driver pieces)
-export { mettaDB, mmin, mabs, flt, num } from "./engine.js";
-
-// OmegaClaw skill surface
-export * as skill from "./skill.js";
+export * from "./input.js";
+export * from "./engine.js";
+export * from "./deontic.js";
+export * from "./pln.js";
+export * from "./snars.js";
+export * from "./motivation.js";
+export * from "./native_score.js";
+export { DecisionEngine, type EvidenceReasoner } from "./score.js";
+export * from "./reasoner.js";
+export * from "./truth_value.js";
+export * from "./prolog.js";
+export * from "./core.js";
+export * from "./directive.js";
+export * from "./ontology.js";
+export * from "./hyperbase.js";
+export * from "./explain.js";
+export * from "./execute.js";
+export * from "./json.js";
+export * from "./skill_installer.js";

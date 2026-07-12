@@ -1,21 +1,29 @@
-// HyperBase-ready structured propositions for GoalChainer. Ports
-// goal_chainer/hyperbase.py. Rewrites the request into structured-English
-// propositions, renders each as Semantic-Hypergraph facts, and assembles the
-// reasoning packet (propositions + ontology grounding + the @metta-ts reasoner).
+// Structured propositions and Semantic-Hypergraph facts for caller-supplied data.
 
-import { extractEvidence, evidenceToDict, type IncidentEvidence } from "./evidence.js";
-import { reasonOverHyperbase, type HyperbaseReasonResult } from "./reasoner.js";
-import { loadColoreContext, type OntologyContext } from "./ontology.js";
+import type { OntologyContext } from "./ontology.js";
+import { assertDenseArray, assertKnownKeys, assertPlainRecord } from "./records.js";
 
 const TOKEN_RE = /[^a-z0-9]+/g;
 
-const STRUCTURED_ENGLISH_SYSTEM_PROMPT = `Rewrite the natural-language request into clear structured English propositions before tool use.
+const STRUCTURED_ENGLISH_SYSTEM_PROMPT = `Rewrite the decision context into clear structured English propositions before evaluating actions.
 Write one proposition per sentence.
 Use one concrete subject, one predicate, and one object or complement.
 Avoid pronouns and vague references.
-Preserve domain terms from the request.
-Keep observations, norms, and recommendations in separate propositions.
-Send the propositions to HyperBase first, then send the HyperBase projection to the native MeTTa/NAL reasoner.`;
+Preserve domain terms from the source.
+Keep observations, norms, goals, and recommendations in separate propositions.
+Send the propositions to HyperBase first.
+Use the resulting facts as evidence for the MeTTa-TS reasoner.`;
+
+export interface StructuredPropositionInput {
+  id: string;
+  sentence: string;
+  predicate: string;
+  subject: string;
+  object: string;
+  source: string;
+  edgePredicate?: string;
+  ontologyHint?: string;
+}
 
 export interface StructuredProposition {
   id: string;
@@ -34,14 +42,20 @@ export interface HyperbasePacket {
   contract: Record<string, unknown>;
   structured_english_prompt: string;
   structured_english: string[];
-  propositions: Record<string, unknown>[];
+  propositions: StructuredProposition[];
   metta_program: string[];
   ontology_grounding: Record<string, unknown>;
-  evidence: Record<string, unknown>;
-  reasoner: HyperbaseReasonResult;
 }
 
-const token = (label: string): string => label.toLowerCase().replace(TOKEN_RE, "_").replace(/^_+|_+$/g, "") || "entity";
+const token = (label: string): string => {
+  const readable =
+    label.toLowerCase().replace(TOKEN_RE, "_").replace(/^_+|_+$/g, "") || "entity";
+  let encoded = "";
+  for (let index = 0; index < label.length; index += 1) {
+    encoded += label.charCodeAt(index).toString(16).padStart(4, "0");
+  }
+  return `${readable}_u${encoded}`;
+};
 const quote = (text: string): string => JSON.stringify(text);
 const edgeAtom = (label: string): string => `${token(label)}/Cc`;
 const shAtom = (label: string): string => `(sh-atom (tag C c NoRoles ()) ${quote(label)})`;
@@ -52,122 +66,91 @@ const hbFact = (kind: string, ...parts: string[]): string => {
   return `(hb ${key} ${parts.join(" ")})`;
 };
 
-function proposition(args: {
-  propId: string;
-  sentence: string;
-  predicate: string;
-  edgePredicate: string;
-  subject: string;
-  object: string;
-  source: string;
-  ontologyHint?: string;
-}): StructuredProposition {
-  const { propId, sentence, predicate, edgePredicate, subject, object, source } = args;
-  const subjectEdge = edgeAtom(subject);
-  const objectEdge = edgeAtom(object);
+/** Build one HyperBase-ready structured proposition. */
+export function makeProposition(input: StructuredPropositionInput): StructuredProposition {
+  assertPlainRecord(input, "structured proposition");
+  assertKnownKeys(input, "structured proposition", [
+    "id",
+    "sentence",
+    "predicate",
+    "subject",
+    "object",
+    "source",
+    "edgePredicate",
+    "ontologyHint",
+  ]);
+  const required = ["id", "sentence", "predicate", "subject", "object", "source"] as const;
+  for (const key of required) {
+    const value = input[key];
+    if (typeof value !== "string") {
+      throw new TypeError(`proposition ${key} must be a string`);
+    }
+    if (value.trim() === "") {
+      throw new RangeError(`proposition ${key} must not be empty`);
+    }
+  }
+  if (input.edgePredicate !== undefined && typeof input.edgePredicate !== "string") {
+    throw new TypeError("proposition edgePredicate must be a string");
+  }
+  if (input.edgePredicate !== undefined && input.edgePredicate.trim() === "") {
+    throw new RangeError("proposition edgePredicate must not be empty");
+  }
+  if (input.ontologyHint !== undefined && typeof input.ontologyHint !== "string") {
+    throw new TypeError("proposition ontologyHint must be a string");
+  }
+  const edgePredicate = input.edgePredicate === undefined ? input.predicate : input.edgePredicate;
+  const subjectEdge = edgeAtom(input.subject);
+  const objectEdge = edgeAtom(input.object);
   const connector = `${token(edgePredicate)}/Pv.so`;
   const edge = `(${connector} ${subjectEdge} ${objectEdge})`;
-  const treeStr = tree(edgePredicate, subject, object);
+  const treeValue = tree(edgePredicate, input.subject, input.object);
+  const propositionId = quote(input.id);
   const facts = [
-    hbFact("edge", propId, edge),
-    hbFact("type", propId, "predicate"),
-    hbFact("tree", propId, treeStr),
-    hbFact("main-type", propId, "P"),
-    hbFact("subtype", propId, "v"),
-    hbFact("roles", propId, "so"),
-    hbFact("namespace", propId, "()"),
-    hbFact("source", propId, quote(sentence)),
-    hbFact("connector", propId, connector),
-    hbFact("arg-roles", propId, "so"),
-    hbFact("connector-label", propId, quote(edgePredicate)),
-    hbFact("connector-main-type", propId, "P"),
-    hbFact("connector-subtype", propId, "v"),
-    hbFact("connector-roles", propId, "so"),
-    hbFact("connector-namespace", propId, "()"),
-    hbFact("arg", propId, "s", subjectEdge),
-    hbFact("arg-pos", propId, "0", "s", subjectEdge),
-    hbFact("role-kind", propId, "0", "s", "subject"),
-    hbFact("arg", propId, "o", objectEdge),
-    hbFact("arg-pos", propId, "1", "o", objectEdge),
-    hbFact("role-kind", propId, "1", "o", "object"),
+    hbFact("edge", propositionId, edge),
+    hbFact("type", propositionId, "predicate"),
+    hbFact("tree", propositionId, treeValue),
+    hbFact("main-type", propositionId, "P"),
+    hbFact("subtype", propositionId, "v"),
+    hbFact("roles", propositionId, "so"),
+    hbFact("namespace", propositionId, "()"),
+    hbFact("sentence", propositionId, quote(input.sentence)),
+    hbFact("source", propositionId, quote(input.source)),
+    hbFact("connector", propositionId, connector),
+    hbFact("arg-roles", propositionId, "so"),
+    hbFact("connector-label", propositionId, quote(edgePredicate)),
+    hbFact("connector-main-type", propositionId, "P"),
+    hbFact("connector-subtype", propositionId, "v"),
+    hbFact("connector-roles", propositionId, "so"),
+    hbFact("connector-namespace", propositionId, "()"),
+    hbFact("arg", propositionId, "s", subjectEdge),
+    hbFact("arg-pos", propositionId, "0", "s", subjectEdge),
+    hbFact("role-kind", propositionId, "0", "s", "subject"),
+    hbFact("arg", propositionId, "o", objectEdge),
+    hbFact("arg-pos", propositionId, "1", "o", objectEdge),
+    hbFact("role-kind", propositionId, "1", "o", "object"),
   ];
   return {
-    id: propId,
-    sentence,
-    predicate,
-    subject,
-    object,
+    id: input.id,
+    sentence: input.sentence,
+    predicate: input.predicate,
+    subject: input.subject,
+    object: input.object,
     edge,
-    tree: treeStr,
+    tree: treeValue,
     facts,
-    source,
-    ontology_hint: args.ontologyHint ?? "",
+    source: input.source,
+    ontology_hint: input.ontologyHint === undefined ? "" : input.ontologyHint,
   };
 }
 
-/** Build one structured proposition, the surface goal_chainer/hyperbase.make_proposition exposes. */
-export function makeProposition(args: {
-  propId: string;
-  sentence: string;
-  predicate: string;
-  subject: string;
-  object: string;
-  source: string;
-  edgePredicate?: string;
-  ontologyHint?: string;
-}): StructuredProposition {
-  return proposition({
-    propId: args.propId,
-    sentence: args.sentence,
-    predicate: args.predicate,
-    edgePredicate: args.edgePredicate ?? args.predicate,
-    subject: args.subject,
-    object: args.object,
-    source: args.source,
-    ontologyHint: args.ontologyHint ?? "",
-  });
-}
-
-function restrictedItems(request: string): string[] {
-  const items = [...extractEvidence(request).sensitiveCategories];
-  return items.length > 0 ? items : ["raw evidence that may identify users or expose systems"];
-}
-
-export function incidentPropositions(request: string): StructuredProposition[] {
-  const rows: StructuredProposition[] = [];
-  let containedItems = restrictedItems(request).filter((item) => item !== "raw logs");
-  if (containedItems.length === 0) containedItems = ["identifiable user data"];
-  containedItems.forEach((item, i) => {
-    rows.push(
-      proposition({
-        propId: `incident-pii-${i + 1}`,
-        sentence: `Raw incident logs contain ${item}.`,
-        predicate: "contain",
-        edgePredicate: "contains",
-        subject: "raw incident logs",
-        object: item,
-        source: "request",
-      }),
-    );
-  });
-  rows.push(
-    proposition({ propId: "incident-risk-1", sentence: "Publishing raw incident logs exposes identifiable user data.", predicate: "expose", edgePredicate: "exposes", subject: "publishing raw incident logs", object: "identifiable user data", source: "goalchainer" }),
-    proposition({ propId: "incident-control-1", sentence: "The redacted summary protects privacy.", predicate: "protect", edgePredicate: "protects", subject: "redacted summary", object: "privacy", source: "goalchainer" }),
-    proposition({ propId: "incident-control-2", sentence: "The redacted summary supports responders.", predicate: "support", edgePredicate: "supports", subject: "redacted summary", object: "responders", source: "goalchainer" }),
-    proposition({ propId: "incident-control-3", sentence: "Holding the external update protects privacy.", predicate: "protect", edgePredicate: "protects", subject: "holding external update", object: "privacy", source: "goalchainer" }),
-    proposition({ propId: "incident-time-1", sentence: "Security review happens before verified customer update.", predicate: "before", edgePredicate: "before", subject: "security review", object: "verified customer update", source: "goalchainer", ontologyHint: "COLORE timepoints/lp_ordering licenses before transitivity" }),
-  );
-  return rows;
-}
-
-function hyperbaseContract(): Record<string, unknown> {
+export function hyperbaseContract(): Record<string, unknown> {
   return {
     purpose: "structured propositions that HyperBase can translate into SH trees",
     rules: [
       "write one proposition per sentence",
-      "use concrete subject, predicate, and object or complement",
+      "use a concrete subject, predicate, and object or complement",
       "avoid pronouns and vague references",
-      "preserve domain words from the request",
+      "preserve domain words from the source",
       "keep normative decisions separate from observed facts",
     ],
     primary_forms: [
@@ -178,30 +161,103 @@ function hyperbaseContract(): Record<string, unknown> {
   };
 }
 
+export function structuredEnglishPrompt(): string {
+  return STRUCTURED_ENGLISH_SYSTEM_PROMPT;
+}
+
 function ontologyGrounding(ontology: OntologyContext | null): Record<string, unknown> {
   if (ontology === null) return { source_available: false, projection_rules: [] };
+  assertPlainRecord(ontology, "ontology context");
+  assertKnownKeys(ontology, "ontology context", [
+    "source_path",
+    "source_available",
+    "module_count",
+    "axiom_count",
+    "predicate_count",
+    "gloss_count",
+    "axiom_kinds",
+    "selected_axioms",
+    "projection_rules",
+  ]);
+  if (typeof ontology.source_available !== "boolean") {
+    throw new TypeError("ontology source_available must be boolean");
+  }
+  if (typeof ontology.source_path !== "string") {
+    throw new TypeError("ontology source_path must be a string");
+  }
+  for (const [field, value] of [
+    ["module_count", ontology.module_count],
+    ["axiom_count", ontology.axiom_count],
+  ] as const) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new TypeError(`ontology ${field} must be a non-negative safe integer`);
+    }
+  }
+  assertDenseArray(ontology.projection_rules, "ontology projection_rules");
+  const projectionRules = Object.freeze(
+    ontology.projection_rules.map((rule, index) => {
+      assertPlainRecord(rule, `ontology projection_rules[${index}]`);
+      assertKnownKeys(rule, `ontology projection_rules[${index}]`, [
+        "id",
+        "source",
+        "available",
+        "kind",
+        "from",
+        "to",
+        "gloss",
+      ]);
+      for (const field of ["id", "source", "to", "gloss"] as const) {
+        if (typeof rule[field] !== "string") {
+          throw new TypeError(`ontology projection_rules[${index}].${field} must be a string`);
+        }
+      }
+      if (typeof rule.available !== "boolean") {
+        throw new TypeError(`ontology projection_rules[${index}].available must be boolean`);
+      }
+      if (rule.kind !== null && typeof rule.kind !== "string") {
+        throw new TypeError(`ontology projection_rules[${index}].kind must be a string or null`);
+      }
+      assertDenseArray(rule.from, `ontology projection_rules[${index}].from`);
+      rule.from.forEach((premise, premiseIndex) => {
+        if (typeof premise !== "string") {
+          throw new TypeError(
+            `ontology projection_rules[${index}].from[${premiseIndex}] must be a string`,
+          );
+        }
+      });
+      return Object.freeze({ ...rule, from: Object.freeze([...rule.from]) });
+    }),
+  );
   return {
     source_available: ontology.source_available,
     source_path: ontology.source_path,
     module_count: ontology.module_count,
     axiom_count: ontology.axiom_count,
-    projection_rules: ontology.projection_rules,
+    projection_rules: projectionRules,
   };
 }
 
-export function buildHyperbasePacket(request: string, ontology?: OntologyContext | null): HyperbasePacket {
-  const evidence: IncidentEvidence = extractEvidence(request);
-  const propositions = incidentPropositions(request);
+/** Assemble a HyperBase packet from explicit propositions. */
+export function buildHyperbasePacket(
+  inputs: readonly StructuredPropositionInput[],
+  ontology: OntologyContext | null = null,
+): HyperbasePacket {
+  assertDenseArray(inputs, "proposition inputs");
+  const ids = new Set<string>();
+  const propositions = inputs.map((input) => {
+    const proposition = makeProposition(input);
+    if (ids.has(proposition.id)) {
+      throw new RangeError(`duplicate proposition ID: ${proposition.id}`);
+    }
+    ids.add(proposition.id);
+    return proposition;
+  });
   return {
     contract: hyperbaseContract(),
     structured_english_prompt: STRUCTURED_ENGLISH_SYSTEM_PROMPT,
-    structured_english: propositions.map((p) => p.sentence),
-    propositions: propositions.map((p) => ({ ...p })),
-    metta_program: propositions.flatMap((p) => p.facts),
-    ontology_grounding: ontologyGrounding(ontology ?? null),
-    evidence: evidenceToDict(evidence),
-    reasoner: reasonOverHyperbase(evidence),
+    structured_english: propositions.map((proposition) => proposition.sentence),
+    propositions,
+    metta_program: propositions.flatMap((proposition) => proposition.facts),
+    ontology_grounding: ontologyGrounding(ontology),
   };
 }
-
-export { loadColoreContext };

@@ -1,6 +1,8 @@
 node_modules/
 dist/
-artifacts/
+ai-notes/
+ai-tmp/
+ai-todo.md
 *.log
 .DS_Store
 

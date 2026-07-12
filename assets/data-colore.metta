@@ -1,5 +1,7 @@
-;; Generated from COLORE (github.com/gruninger/colore)
-;; CC BY-SA 4.0 — (c) University of Toronto and others.
+;; Adapted into MeTTa facts from COLORE: https://github.com/gruninger/colore
+;; Copyright University of Toronto and other COLORE contributors.
+;; Contributors: Carmen Chui, Michael Gruninger, and Janette Wong.
+;; Licensed CC BY-SA 4.0: https://creativecommons.org/licenses/by-sa/4.0/
 
 (colore module timepoints/bp_dense "http://colore.oor.net/timepoints/bp_dense.clif")
 (colore imports timepoints/bp_dense timepoints/bp_ordering)

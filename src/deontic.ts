@@ -1,100 +1,215 @@
-// Derive each action's deontic status with a defeasible-deontic micro-engine on
-// @metta-ts, driven through the typed eDSL. Ports goal_chainer/deontic_engine.py.
-//
-// The request's evidence becomes a theory of `given` facts and defeasible
-// `normally` rules (must / may / forbidden heads), built as typed atoms and added
-// to the engine. A `normally` rule fires its deontic head when its body is a
-// `given` fact; the firing runs as `match` on the interpreter and returns typed
-// rows. The F>O>P dominance fold stays in TypeScript (it is selection, not math).
+// Resolve caller-supplied policy norms on the @metta-ts interpreter.
 
-import { type Term, type Atom, rel, S, v, matchSelf } from "@metta-ts/edsl";
-import { mettaDB } from "./engine.js";
-import type { IncidentEvidence } from "./evidence.js";
-import { privacyAtStake } from "./evidence.js";
+import { If, Match, and, names, or, vars } from "@metta-ts/edsl";
 
-export const ACTION_ORDER = [
-  "publish_raw_log",
-  "publish_redacted_summary",
-  "hold_external_update",
-] as const;
+import { addTerms, mettaDB, type MettaDB } from "./engine.js";
+import { createNorm, type Norm, type NormMode } from "./models.js";
+import { assertDenseArray } from "./records.js";
 
-const MODE_TO_STATUS: Record<string, string> = { forbidden: "forbidden", must: "obligated", may: "permitted" };
-const STATUS_RANK: Record<string, number> = {
-  forbidden: 3,
-  obligated: 2,
-  permitted: 1,
-  unregulated: 0,
-};
+export const NORM_STATUSES = Object.freeze([
+  "unregulated",
+  "permitted",
+  "obligated",
+  "forbidden",
+  "conflict",
+] as const);
 
-export interface DeonticResult {
-  statusByAction: Record<string, string>;
-  theory: string;
-  conclusions: string;
-}
+export type NormStatus = (typeof NORM_STATUSES)[number];
 
-export function deonticStatus(result: DeonticResult, actionId: string): string {
-  return result.statusByAction[actionId] ?? "unregulated";
-}
+const NORM_MODES: ReadonlySet<string> = new Set<NormMode>(["forbid", "oblige", "permit"]);
+const STATUS_SET: ReadonlySet<string> = new Set(NORM_STATUSES);
 
-const given = (x: Term): Atom => rel("given")(x);
-const normally = (name: string, body: Term, head: Term): Atom => rel("normally")(S(name), body, head);
+type DeonticName =
+  | NormStatus
+  | "policy-norm"
+  | "has-policy-mode"
+  | "norm-resolution-status";
 
-/** Project the evidence into the defeasible-deontic theory as typed atoms. */
-export function theoryAtoms(evidence: IncidentEvidence): Atom[] {
-  const a = S.publish_raw_log;
-  const r = S.publish_redacted_summary;
-  const h = S.hold_external_update;
-  const atoms: Atom[] = [];
-  if (privacyAtStake(evidence)) {
-    atoms.push(given(rel("risky")(a)), normally("rRawForbid", rel("risky")(a), rel("forbidden")(a)));
-  } else {
-    atoms.push(given(rel("safe")(a)), normally("rRawPermit", rel("safe")(a), rel("may")(a)));
-  }
-  atoms.push(given(rel("protects")(r)));
-  if (evidence.factsReady) {
-    atoms.push(normally("rRedOblige", rel("protects")(r), rel("must")(r)));
-  } else {
-    atoms.push(normally("rRedPermit", rel("protects")(r), rel("may")(r)));
-  }
-  if (!evidence.factsReady) {
-    atoms.push(given(rel("factsUnready")()), normally("rHoldOblige", rel("factsUnready")(), rel("must")(h)));
-  } else {
-    atoms.push(given(rel("may")(h)));
-  }
-  return atoms;
-}
+const n = names<DeonticName>();
+const policyNorm = n["policy-norm"];
+const hasPolicyMode = n["has-policy-mode"];
+const normResolutionStatus = n["norm-resolution-status"];
 
-/** The theory's MeTTa source, for the report (one atom per line). */
-export function buildTheory(evidence: IncidentEvidence): string {
-  return theoryAtoms(evidence).map((atom) => String(atom)).join("\n") + "\n";
-}
+/** The highest-priority policy result for one action. */
+export class NormResolution {
+  readonly reasons: readonly string[];
 
-export function deriveDeontic(evidence: IncidentEvidence): DeonticResult {
-  const db = mettaDB();
-  const atoms = theoryAtoms(evidence);
-  db.add(...atoms);
-
-  // A normally-rule fires its head when its body is a given fact; directly-given
-  // deontic literals hold as themselves. Each clause adds a way to derive deon-lit.
-  db.rule(rel("deon-lit")(), matchSelf(rel("normally")(v("n"), v("b"), v("h")), matchSelf(rel("given")(v("b")), v("h"))));
-  for (const mode of ["forbidden", "may", "must"]) {
-    db.rule(rel("deon-lit")(), matchSelf(rel("given")(rel(mode)(v("a"))), rel(mode)(v("a"))));
-  }
-  const lits = db.evalJs(rel("deon-lit")()) as string[][];
-
-  const statusByAction: Record<string, string> = {};
-  for (const lit of lits) {
-    const [mode, action] = lit;
-    if (mode === undefined || action === undefined) continue;
-    const candidate = MODE_TO_STATUS[mode];
-    if (candidate === undefined) continue;
-    if ((STATUS_RANK[candidate] ?? 0) > (STATUS_RANK[statusByAction[action] ?? "unregulated"] ?? 0)) {
-      statusByAction[action] = candidate;
+  constructor(
+    readonly status: NormStatus,
+    reasons: readonly string[],
+    readonly priority: number,
+  ) {
+    if (!STATUS_SET.has(status)) {
+      throw new TypeError(`unsupported norm resolution status: ${String(status)}`);
     }
+    assertDenseArray(reasons, "norm resolution reasons");
+    reasons.forEach((reason, index) => {
+      if (typeof reason !== "string") {
+        throw new TypeError(`norm resolution reasons[${index}] must be a string`);
+      }
+    });
+    if (!Number.isSafeInteger(priority)) {
+      throw new RangeError("norm resolution priority must be a safe integer");
+    }
+    this.reasons = Object.freeze([...reasons]);
+    Object.freeze(this);
   }
-  for (const actionId of ACTION_ORDER) {
-    if (!(actionId in statusByAction)) statusByAction[actionId] = "unregulated";
+
+  get blocksAction(): boolean {
+    return this.status === "forbidden" || this.status === "conflict";
   }
-  const conclusions = "(" + lits.map(([m, ac]) => `(${m} ${ac})`).join(" ") + ")";
-  return { statusByAction, theory: buildTheory(evidence), conclusions };
+}
+
+interface NormDatabase {
+  readonly db: MettaDB;
+  readonly indexedNorms: readonly Norm[];
+}
+
+function validateNorms(norms: readonly Norm[]): void {
+  assertDenseArray(norms, "norms");
+  norms.forEach((norm, index) => {
+    for (const [field, value] of [
+      ["id", norm.id],
+      ["targetAction", norm.targetAction],
+      ["reason", norm.reason],
+    ] as const) {
+      if (typeof value !== "string" || value.trim() === "") {
+        throw new TypeError(`norm at index ${index} ${field} must be a nonblank string`);
+      }
+    }
+    if (!NORM_MODES.has(norm.mode)) {
+      throw new TypeError(`norm at index ${index} has unsupported mode: ${String(norm.mode)}`);
+    }
+    if (!Number.isInteger(norm.priority)) {
+      throw new RangeError(`norm at index ${index} has non-integer priority: ${norm.priority}`);
+    }
+    if (!Number.isSafeInteger(norm.priority)) {
+      throw new RangeError(`norm at index ${index} has unsafe integer priority: ${norm.priority}`);
+    }
+  });
+}
+
+function validateActionIds(actionIds: readonly string[]): void {
+  assertDenseArray(actionIds, "action ids");
+  const seen = new Set<string>();
+  for (const actionId of actionIds) {
+    if (typeof actionId !== "string" || actionId.trim() === "") {
+      throw new TypeError("action ids must contain nonblank strings");
+    }
+    if (seen.has(actionId)) throw new TypeError(`duplicate action id: ${actionId}`);
+    seen.add(actionId);
+  }
+}
+
+function createNormDatabase(norms: readonly Norm[]): NormDatabase {
+  assertDenseArray(norms, "norms");
+  const indexedNorms = Object.freeze(norms.map((norm) => createNorm(norm)));
+  validateNorms(indexedNorms);
+  const normIds = new Set<string>();
+  for (const norm of indexedNorms) {
+    if (normIds.has(norm.id)) throw new RangeError(`duplicate norm ID: ${norm.id}`);
+    normIds.add(norm.id);
+  }
+  const db = mettaDB();
+  addTerms(
+    db,
+    indexedNorms.map((norm, index) =>
+      policyNorm(norm.targetAction, index, norm.mode, norm.priority, norm.reason),
+    ),
+  );
+
+  const { action, index, mode, priority, reason } = vars<{
+    action: string;
+    index: number;
+    mode: NormMode;
+    priority: number;
+    reason: string;
+  }>();
+  db.rule(
+    hasPolicyMode(action, priority, mode),
+    Match(policyNorm(action, index, mode, priority, reason), true),
+  );
+
+  const { hasForbid, hasPermit, hasOblige } = vars<{
+    hasForbid: boolean;
+    hasPermit: boolean;
+    hasOblige: boolean;
+  }>();
+  db.rule(
+    normResolutionStatus(hasForbid, hasPermit, hasOblige),
+    If(
+      and(hasForbid, or(hasPermit, hasOblige)),
+      n.conflict,
+      If(hasForbid, n.forbidden, If(hasOblige, n.obligated, n.permitted)),
+    ),
+  );
+
+  return { db, indexedNorms };
+}
+
+function resolveFromDatabase(actionId: string, database: NormDatabase): NormResolution {
+  const { db, indexedNorms } = database;
+  const { index, mode, priority, reason } = vars<{
+    index: number;
+    mode: NormMode;
+    priority: number;
+    reason: string;
+  }>();
+  const applicable = db.query(
+    policyNorm(actionId, index, mode, priority, reason),
+    { index, mode, priority, reason },
+  );
+  if (applicable.length === 0) return new NormResolution("unregulated", [], 0);
+
+  let maxPriority = applicable[0]!.priority;
+  if (!Number.isSafeInteger(maxPriority)) {
+    throw new Error(`@metta-ts returned invalid norm priority: ${String(maxPriority)}`);
+  }
+  for (const row of applicable.slice(1)) {
+    if (!Number.isSafeInteger(row.priority)) {
+      throw new Error(`@metta-ts returned invalid norm priority: ${String(row.priority)}`);
+    }
+    if (row.priority > maxPriority) maxPriority = row.priority;
+  }
+  const strongest = db
+    .query(policyNorm(actionId, index, mode, maxPriority, reason), {
+      index,
+      mode,
+      reason,
+    })
+    .sort((left, right) => left.index - right.index);
+
+  const present = (candidate: NormMode): boolean =>
+    db.evalJs(hasPolicyMode(actionId, maxPriority, candidate)).length > 0;
+  const result = db.evalJs(
+    normResolutionStatus(present("forbid"), present("permit"), present("oblige")),
+  )[0];
+  if (typeof result !== "string" || !STATUS_SET.has(result)) {
+    throw new Error(`@metta-ts returned invalid norm resolution status: ${String(result)}`);
+  }
+
+  const reasons = strongest.map((row) => {
+    const source = indexedNorms[row.index];
+    if (source === undefined) {
+      throw new Error(`@metta-ts returned unknown norm index: ${row.index}`);
+    }
+    return `${source.mode}:${source.reason}`;
+  });
+  return new NormResolution(result as NormStatus, reasons, maxPriority);
+}
+
+/** Resolve the strongest applicable norms for one action. */
+export function resolveNorms(actionId: string, norms: readonly Norm[]): NormResolution {
+  validateActionIds([actionId]);
+  return resolveFromDatabase(actionId, createNormDatabase(norms));
+}
+
+/** Resolve arbitrary ordered action IDs against one shared norm database. */
+export function resolveNormsBatch(
+  actionIds: readonly string[],
+  norms: readonly Norm[],
+): ReadonlyMap<string, NormResolution> {
+  validateActionIds(actionIds);
+  const database = createNormDatabase(norms);
+  return new Map(actionIds.map((actionId) => [actionId, resolveFromDatabase(actionId, database)]));
 }
