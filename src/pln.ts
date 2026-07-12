@@ -1,4 +1,4 @@
-// GoalChainer PLN deduction and revision through goalchainer.metta.
+// GoalChainer PLN deduction and revision through oh-my-goals.metta.
 
 import {
   mettaCall,
@@ -153,7 +153,7 @@ function factTerm(fact: PlnFact): Term {
 
 function finiteTruthValue(value: unknown, path: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
-    throw new Error(`goalchainer.metta returned an invalid ${path}`);
+    throw new Error(`oh-my-goals.metta returned an invalid ${path}`);
   }
   return value;
 }

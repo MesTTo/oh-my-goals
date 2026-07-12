@@ -109,14 +109,14 @@ function evidenceNormStatus(value: string, actionId: string): NormStatus {
 
 function finiteNumber(value: unknown, path: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`goalchainer.metta returned an invalid number for ${path}`);
+    throw new Error(`oh-my-goals.metta returned an invalid number for ${path}`);
   }
   return value;
 }
 
 function stringList(value: unknown, path: string): string[] {
   if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
-    throw new Error(`goalchainer.metta returned an invalid string sequence for ${path}`);
+    throw new Error(`oh-my-goals.metta returned an invalid string sequence for ${path}`);
   }
   return [...value] as string[];
 }
@@ -134,7 +134,7 @@ export function nativeRankingFields(
     !Array.isArray(value[2]) ||
     typeof value[3] !== "boolean"
   ) {
-    throw new Error(`goalchainer.metta returned an invalid ${context} ranking`);
+    throw new Error(`oh-my-goals.metta returned an invalid ${context} ranking`);
   }
   return [value[1], value[2], value[3]];
 }
@@ -150,7 +150,7 @@ function evaluationBatchFields(
     !Array.isArray(value[1]) ||
     !Array.isArray(value[2])
   ) {
-    throw new Error(`goalchainer.metta returned an invalid ${context}`);
+    throw new Error(`oh-my-goals.metta returned an invalid ${context}`);
   }
   return [value[1], value[2]];
 }
@@ -264,7 +264,7 @@ function readDecisionResult(
 ): Decision {
   if (!Array.isArray(value) || value.length !== 15 || value[0] !== "DecisionResult") {
     throw new Error(
-      `goalchainer.metta returned an invalid decision for ${prepared.action.id}`,
+      `oh-my-goals.metta returned an invalid decision for ${prepared.action.id}`,
     );
   }
   const [
@@ -285,16 +285,16 @@ function readDecisionResult(
     missingValue,
   ] = value;
   if (actionId !== prepared.action.id || label !== prepared.action.label) {
-    throw new Error(`goalchainer.metta changed the declared action identity: ${prepared.action.id}`);
+    throw new Error(`oh-my-goals.metta changed the declared action identity: ${prepared.action.id}`);
   }
   if (typeof status !== "string" || !DECISION_STATUS_SET.has(status)) {
-    throw new Error(`goalchainer.metta returned an invalid decision status for ${actionId}`);
+    throw new Error(`oh-my-goals.metta returned an invalid decision status for ${actionId}`);
   }
   if (typeof normStatus !== "string" || !NORM_STATUS_SET.has(normStatus)) {
-    throw new Error(`goalchainer.metta returned an invalid norm status for ${actionId}`);
+    throw new Error(`oh-my-goals.metta returned an invalid norm status for ${actionId}`);
   }
   if (reasonerStatus !== prepared.projectedNormStatus) {
-    throw new Error(`goalchainer.metta changed the evidence norm status for ${actionId}`);
+    throw new Error(`oh-my-goals.metta changed the evidence norm status for ${actionId}`);
   }
   const score = finiteNumber(scoreValue, `${actionId}.score`);
   const goalScore = finiteNumber(goalScoreValue, `${actionId}.goalScore`);
@@ -303,7 +303,7 @@ function readDecisionResult(
   finiteNumber(expectationValue, `${actionId}.expectation`);
   const priority = finiteNumber(priorityValue, `${actionId}.normPriority`);
   if (!Number.isSafeInteger(priority) || priority !== prepared.norm.priority) {
-    throw new Error(`goalchainer.metta returned an invalid norm priority for ${actionId}`);
+    throw new Error(`oh-my-goals.metta returned an invalid norm priority for ${actionId}`);
   }
   const reasons = stringList(nativeReasons, `${actionId}.normReasons`);
   let satisfiedGoals: string[];
@@ -316,7 +316,7 @@ function readDecisionResult(
   ) {
     satisfiedGoals = [...prepared.action.satisfies];
   } else {
-    throw new Error(`goalchainer.metta returned invalid analyzed satisfaction for ${actionId}`);
+    throw new Error(`oh-my-goals.metta returned invalid analyzed satisfaction for ${actionId}`);
   }
   let missingRequiredGoals: string[];
   if (prepared.goalAnalysis === undefined) {
@@ -328,7 +328,7 @@ function readDecisionResult(
   ) {
     missingRequiredGoals = [...prepared.goalAnalysis.missing];
   } else {
-    throw new Error(`goalchainer.metta returned invalid analyzed missing goals for ${actionId}`);
+    throw new Error(`oh-my-goals.metta returned invalid analyzed missing goals for ${actionId}`);
   }
   if (
     prepared.goalAnalysis !== undefined &&
@@ -342,7 +342,7 @@ function readDecisionResult(
       )
     )
   ) {
-    throw new Error(`goalchainer.metta changed the analyzed goal result for ${actionId}`);
+    throw new Error(`oh-my-goals.metta changed the analyzed goal result for ${actionId}`);
   }
   const normReasons = [
     ...reasons,
@@ -397,12 +397,12 @@ function readRanking(
   reasonerSource: string,
 ): DecisionRanking {
   if (!Array.isArray(value) || value.length !== 3 || value[0] !== "ScenarioEvaluation") {
-    throw new Error("goalchainer.metta returned an invalid scenario evaluation");
+    throw new Error("oh-my-goals.metta returned an invalid scenario evaluation");
   }
   const evaluated = value[1];
   const ranking = value[2];
   if (!Array.isArray(evaluated) || evaluated.length !== prepared.length) {
-    throw new Error("goalchainer.metta returned the wrong number of evaluated decisions");
+    throw new Error("oh-my-goals.metta returned the wrong number of evaluated decisions");
   }
   const decisionsById = new Map<string, Decision>();
   evaluated.forEach((entry, index) => {
@@ -412,7 +412,7 @@ function readRanking(
       entry[0] !== "EvaluatedDecision" ||
       entry[1] !== index
     ) {
-      throw new Error(`goalchainer.metta returned an invalid evaluated decision at ${index}`);
+      throw new Error(`oh-my-goals.metta returned an invalid evaluated decision at ${index}`);
     }
     const decision = readDecisionResult(entry[2], prepared[index]!, reasonerSource);
     decisionsById.set(decision.actionId, decision);
@@ -428,11 +428,11 @@ function readRanking(
       typeof row[3] !== "number" ||
       typeof row[4] !== "string"
     ) {
-      throw new Error(`goalchainer.metta returned an invalid ranked row at ${index}`);
+      throw new Error(`oh-my-goals.metta returned an invalid ranked row at ${index}`);
     }
     const decision = decisionsById.get(row[1]);
     if (decision === undefined || decision.score !== row[3] || decision.status !== row[4]) {
-      throw new Error(`goalchainer.metta returned an inconsistent ranked row for ${row[1]}`);
+      throw new Error(`oh-my-goals.metta returned an inconsistent ranked row for ${row[1]}`);
     }
     return row[1];
   });
@@ -456,7 +456,7 @@ export function mergeNormStatus(staticStatus: NormStatus, reasonerStatus: NormSt
     mettaSymbol(reasonerStatus),
   );
   if (typeof value !== "string" || !NORM_STATUS_SET.has(value)) {
-    throw new Error(`goalchainer.metta returned an invalid merged norm status: ${String(value)}`);
+    throw new Error(`oh-my-goals.metta returned an invalid merged norm status: ${String(value)}`);
   }
   return value as NormStatus;
 }
@@ -505,7 +505,7 @@ export class DecisionEngine {
     );
     const results = this.db.evalJs(mettaCall("gc-evaluate-request", prepared.request));
     if (results.length !== 1) {
-      throw new Error(`goalchainer.metta returned ${results.length} decisions for ${declaredAction.id}`);
+      throw new Error(`oh-my-goals.metta returned ${results.length} decisions for ${declaredAction.id}`);
     }
     const [evaluated, rows] = evaluationBatchFields(
       results[0],
@@ -519,7 +519,7 @@ export class DecisionEngine {
       evaluated[0][0] !== "EvaluatedDecision" ||
       evaluated[0][1] !== 0
     ) {
-      throw new Error(`goalchainer.metta returned an invalid decision for ${declaredAction.id}`);
+      throw new Error(`oh-my-goals.metta returned an invalid decision for ${declaredAction.id}`);
     }
     return readDecisionResult(evaluated[0][2], prepared, this.reasoner.source);
   }
@@ -552,7 +552,7 @@ export class DecisionEngine {
         mettaFloat(SCORE_EQUIVALENCE_EPSILON),
       ));
       if (values.length !== 1) {
-        throw new Error(`goalchainer.metta returned ${values.length} scenario evaluations`);
+        throw new Error(`oh-my-goals.metta returned ${values.length} scenario evaluations`);
       }
       return readRanking(values[0], prepared, this.reasoner.source);
     }
@@ -563,22 +563,22 @@ export class DecisionEngine {
     const batches = groups.map((values, index) => {
       if (values.length !== 1) {
         throw new Error(
-          `goalchainer.metta returned ${values.length} evaluations for action ${index}`,
+          `oh-my-goals.metta returned ${values.length} evaluations for action ${index}`,
         );
       }
       const batchAtom = values[0]!;
       const batch = atomToJs(batchAtom);
       const [evaluated, rows] = evaluationBatchFields(batch, `action evaluation at ${index}`);
       if (evaluated.length !== 1 || rows.length !== 1) {
-        throw new Error(`goalchainer.metta returned an invalid action evaluation at ${index}`);
+        throw new Error(`oh-my-goals.metta returned an invalid action evaluation at ${index}`);
       }
       if (!(batchAtom instanceof ExpressionAtom)) {
-        throw new Error(`goalchainer.metta returned a non-expression action evaluation at ${index}`);
+        throw new Error(`oh-my-goals.metta returned a non-expression action evaluation at ${index}`);
       }
       const batchFields = batchAtom.children();
       const rowSequence = batchFields[2];
       if (!(rowSequence instanceof ExpressionAtom) || rowSequence.children().length !== 1) {
-        throw new Error(`goalchainer.metta returned an invalid native decision row at ${index}`);
+        throw new Error(`oh-my-goals.metta returned an invalid native decision row at ${index}`);
       }
       return {
         evaluated: evaluated[0],
@@ -589,7 +589,7 @@ export class DecisionEngine {
     for (const [index, batch] of batches.entries()) {
       const entry = batch.evaluated;
       if (!Array.isArray(entry) || entry.length !== 3 || entry[0] !== "EvaluatedDecision") {
-        throw new Error(`goalchainer.metta returned an invalid evaluated decision at ${index}`);
+        throw new Error(`oh-my-goals.metta returned an invalid evaluated decision at ${index}`);
       }
       const decision = readDecisionResult(entry[2], prepared[index]!, this.reasoner.source);
       if (
@@ -601,7 +601,7 @@ export class DecisionEngine {
         batch.rowValue[3] !== decision.score ||
         batch.rowValue[4] !== decision.status
       ) {
-        throw new Error(`goalchainer.metta returned an inconsistent decision row at ${index}`);
+        throw new Error(`oh-my-goals.metta returned an inconsistent decision row at ${index}`);
       }
     }
     const ranking = mettaOne(
@@ -653,7 +653,7 @@ function normalizedMotivation(
   );
 }
 
-/** Min-max normalize finite values through goalchainer.metta. */
+/** Min-max normalize finite values through oh-my-goals.metta. */
 export function normalizeFiniteMotivation(values: readonly number[]): number[] {
   assertDenseArray(values, "motivation values");
   values.forEach((value) => {
@@ -670,7 +670,7 @@ export function normalizeFiniteMotivation(values: readonly number[]): number[] {
     result.length !== values.length ||
     result.some((value) => typeof value !== "number" || !Number.isFinite(value))
   ) {
-    throw new Error("goalchainer.metta returned invalid normalized motivation values");
+    throw new Error("oh-my-goals.metta returned invalid normalized motivation values");
   }
   return [...result] as number[];
 }
@@ -694,7 +694,7 @@ function nativeGoalAnalysis(goals: readonly Goal[], satisfied: readonly string[]
       mettaCall("noeval", encodedSatisfied),
     );
     if (!Array.isArray(fold) || fold.length !== 8 || fold[0] !== "GoalFold") {
-      throw new Error("goalchainer.metta returned an invalid goal fold");
+      throw new Error("oh-my-goals.metta returned an invalid goal fold");
     }
     const totals = fold.slice(1, 7).map((value, index) =>
       finiteNumber(value, `goal fold value ${index}`)
@@ -706,7 +706,7 @@ function nativeGoalAnalysis(goals: readonly Goal[], satisfied: readonly string[]
       ...totals.map(mettaFloat),
     );
     if (!Array.isArray(scores) || scores.length !== 4 || scores[0] !== "GoalScores") {
-      throw new Error("goalchainer.metta returned invalid goal scores");
+      throw new Error("oh-my-goals.metta returned invalid goal scores");
     }
     return {
       all: finiteNumber(scores[1], "goal scores all"),
@@ -722,7 +722,7 @@ function nativeGoalAnalysis(goals: readonly Goal[], satisfied: readonly string[]
     encodedSatisfied,
   );
   if (!Array.isArray(value) || value.length !== 5 || value[0] !== "GoalAnalysis") {
-    throw new Error("goalchainer.metta returned an invalid goal analysis");
+    throw new Error("oh-my-goals.metta returned an invalid goal analysis");
   }
   return {
     all: finiteNumber(value[1], "goal analysis all"),

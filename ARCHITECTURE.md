@@ -1,8 +1,8 @@
 # Architecture
 
-GoalChainer is a native MeTTa framework with a TypeScript host. The package runs on MeTTa TS 1.1.4.
+Oh My Goals is a native MeTTa framework with a TypeScript host. The package runs on MeTTa TS 1.1.4.
 
-[`metta/goalchainer.metta`](metta/goalchainer.metta) declares the semantic rules. Public TypeScript functions validate caller data, encode it as atoms, query that module, and decode the returned values. For large inputs, the module selects bounded grounded implementations of specific collection transforms and structural joins. Those mirrors are listed below.
+[`metta/oh-my-goals.metta`](metta/oh-my-goals.metta) declares the semantic rules. Public TypeScript functions validate caller data, encode it as atoms, query that module, and decode the returned values. For large inputs, the module selects bounded grounded implementations of specific collection transforms and structural joins. Those mirrors are listed below.
 
 The native paths use the MeTTa TS standard library directly. `foldl-atom` carries compensated sums and small PLN revision state, `map-atom` and `filter-atom` implement bounded collection transforms, `msort` orders decorated decision keys, and `is-member` performs structural identity checks. Large inputs switch to bounded grounded primitives when the standard recursive forms would copy large captured atoms or exceed the evaluator stack.
 
@@ -15,13 +15,13 @@ caller data
 TypeScript validation and atom encoding
     |
     v
-metta/goalchainer.metta
+metta/oh-my-goals.metta
     |
     v
 TypeScript receipt decoding and caller-owned action dispatch
 ```
 
-The caller supplies goals, norms, available actions, evidence, and any optional correlation or risk inputs. GoalChainer does not infer policy from an agent account or authentication state.
+The caller supplies goals, norms, available actions, evidence, and any optional correlation or risk inputs. Oh My Goals does not infer policy from an agent account or authentication state.
 
 The shared evaluator parses the packaged module and adds its definitions to a MeTTa space. Pure API calls reuse that rule space. Stateful directive lifecycles use isolated spaces so claims from one lifecycle cannot affect another.
 
@@ -96,11 +96,11 @@ Execution remains outside the reasoning module. A `recommended` result is not au
 
 The packaged Agent Skill gives Claude Code, Codex, and OpenCode the same CLI protocol. Each agent writes the same strict JSON input and reads the same decision receipt. The skill installer changes only the destination layout for each tool.
 
-GoalChainer does not call those agents as models. It does not read or transfer their login state. Authentication remains owned by the agent tool that the user already configured.
+Oh My Goals does not call those agents as models. It does not read or transfer their login state. Authentication remains owned by the agent tool that the user already configured.
 
 ## Prolog interoperability
 
-SWI-Prolog is optional. The primary evaluator remains `goalchainer.metta` on MeTTa TS.
+SWI-Prolog is optional. The primary evaluator remains `oh-my-goals.metta` on MeTTa TS.
 
 `assets/gc_score.pl` exposes score and decision-status predicates. `assets/gc_directive.pl` exposes the directive task-state predicate. `@metta-ts/prolog` imports those named predicates into a MeTTa TS evaluator. The `prolog-check` command compares their outputs with the corresponding native relations and disposes the bridge after the check.
 
@@ -124,4 +124,4 @@ ProbMeTTa is not ported. ProbMeTTa currently targets PeTTa and SWI-Prolog. A cal
 
 ## Verification
 
-The repository checks the native module directly, exercises each public reasoning surface, compares the named Prolog predicates when SWI-Prolog is available, and installs the packed tarball into an isolated consumer. Package verification must confirm that `metta/goalchainer.metta` is present in the installed package because runtime behavior depends on that file.
+The repository checks the native module directly, exercises each public reasoning surface, compares the named Prolog predicates when SWI-Prolog is available, and installs the packed tarball into an isolated consumer. Package verification must confirm that `metta/oh-my-goals.metta` is present in the installed package because runtime behavior depends on that file.

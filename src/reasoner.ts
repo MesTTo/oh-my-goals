@@ -43,7 +43,7 @@ function expectation(db: GoalChainerMetta, strength: number, confidence: number)
     mettaFloat(confidence),
   );
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error("goalchainer.metta returned an invalid evidence expectation");
+    throw new Error("oh-my-goals.metta returned an invalid evidence expectation");
   }
   return value;
 }

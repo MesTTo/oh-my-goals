@@ -1,4 +1,4 @@
-// Generic task planning and claim lifecycle through goalchainer.metta.
+// Generic task planning and claim lifecycle through oh-my-goals.metta.
 
 import { NORM_STATUSES, type NormStatus } from "./deontic.js";
 import {
@@ -162,7 +162,7 @@ export function classifyTaskStates(
     const taskId = taskIds[index]!;
     if (values.length !== 1 || !isTaskState(values[0])) {
       throw new Error(
-        `goalchainer.metta returned invalid task state for ${taskId}: ${JSON.stringify(values)}`,
+        `oh-my-goals.metta returned invalid task state for ${taskId}: ${JSON.stringify(values)}`,
       );
     }
     return values[0];
@@ -185,7 +185,7 @@ function orderedTasks(rows: readonly unknown[], context: string): string[] {
       typeof row[1] !== "number" ||
       typeof row[2] !== "string"
     ) {
-      throw new Error(`goalchainer.metta returned invalid ${context} row: ${JSON.stringify(row)}`);
+      throw new Error(`oh-my-goals.metta returned invalid ${context} row: ${JSON.stringify(row)}`);
     }
     return { order: row[1], task: row[2] };
   });
@@ -202,7 +202,7 @@ function readDuplicateClaim(value: unknown, task: string): DirectiveClaim | unde
     typeof value[2] !== "number" ||
     !Number.isSafeInteger(value[2])
   ) {
-    throw new Error(`goalchainer.metta returned invalid duplicate-claim guard for ${task}`);
+    throw new Error(`oh-my-goals.metta returned invalid duplicate-claim guard for ${task}`);
   }
   return { ok: true, task, agent: value[1], version: value[2] };
 }
@@ -217,7 +217,7 @@ function readClaimReceipt(value: unknown, task: string): DirectiveClaim {
     typeof value[3] !== "number" ||
     !Number.isSafeInteger(value[3])
   ) {
-    throw new Error(`goalchainer.metta returned invalid claim receipt for ${task}`);
+    throw new Error(`oh-my-goals.metta returned invalid claim receipt for ${task}`);
   }
   return { ok: true, task, agent: value[2], version: value[3] };
 }
@@ -301,7 +301,7 @@ export class DirectiveLifecycle {
         typeof row[3] !== "string" ||
         typeof row[4] !== "string"
       ) {
-        throw new Error(`goalchainer.metta returned invalid next-assignment row: ${JSON.stringify(row)}`);
+        throw new Error(`oh-my-goals.metta returned invalid next-assignment row: ${JSON.stringify(row)}`);
       }
       return { order: row[1], task: row[2], agent: row[3], rule: row[4] };
     });
@@ -325,11 +325,11 @@ export class DirectiveLifecycle {
     }
     const state = this.db.evalJs(mettaCall("gc-directive-readiness", taskId))[0];
     if (!isTaskState(state)) {
-      throw new Error(`goalchainer.metta returned invalid readiness for ${task}: ${String(state)}`);
+      throw new Error(`oh-my-goals.metta returned invalid readiness for ${task}: ${String(state)}`);
     }
     if (state !== "ready") return { ok: false, code: "not_ready", task, state };
     if (this.db.evalJs(mettaCall("gc-directive-claimable", taskId))[0] !== true) {
-      throw new Error(`goalchainer.metta rejected an unclaimed ready task: ${task}`);
+      throw new Error(`oh-my-goals.metta rejected an unclaimed ready task: ${task}`);
     }
 
     const openFact = mettaCall("DirectiveClaimOpen", taskId);

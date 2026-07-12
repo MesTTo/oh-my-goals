@@ -79,7 +79,7 @@ describe("generic CLI", () => {
   it("prints root and command help", () => {
     const root = run(["--help"]);
     expect(root.status).toBe(0);
-    expect(root.stdout).toContain("goalchainer <command>");
+    expect(root.stdout).toContain("oh-my-goals <command>");
     expect(root.stderr).toBe("");
 
     const decide = run(["decide", "--help"]);
@@ -196,9 +196,9 @@ describe("generic CLI", () => {
     ]);
     expect(result.status).toBe(0);
     const payload = JSON.parse(result.stdout) as { installed: string[] };
-    expect(payload.installed).toEqual([join(project, ".agents", "skills", "goalchainer")]);
+    expect(payload.installed).toEqual([join(project, ".agents", "skills", "oh-my-goals")]);
     expect(readFileSync(join(payload.installed[0]!, "SKILL.md"), "utf8")).toContain(
-      "name: goalchainer",
+      "name: oh-my-goals",
     );
 
     const repeated = run([

@@ -75,7 +75,7 @@ describe("generic motivation consensus", () => {
         ...structuredClone(native),
         consensus_scores: { action_left: 0, action_right: 5e-13 },
       }),
-    ).toThrow("inconsistent with goalchainer.metta");
+    ).toThrow("inconsistent with oh-my-goals.metta");
   });
 
   it("supports custom negative correlations and per-action risks", () => {

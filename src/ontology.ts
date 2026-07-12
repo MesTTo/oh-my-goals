@@ -112,7 +112,7 @@ function projectionAvailable(axiom: ColoreAxiom, spec: ProjectionSpec): boolean 
     mettaString(spec.expectedExpression),
   );
   if (typeof value !== "boolean") {
-    throw new Error("goalchainer.metta returned an invalid projection availability");
+    throw new Error("oh-my-goals.metta returned an invalid projection availability");
   }
   return value;
 }

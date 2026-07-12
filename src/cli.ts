@@ -26,23 +26,23 @@ const MAX_INPUT_BYTES = 2 * 1024 * 1024;
 const AGENTS = ["codex", "claude", "opencode", "all"] as const;
 const SCOPES = ["project", "user"] as const;
 
-const ROOT_HELP = `usage: goalchainer <command> [options]
+const ROOT_HELP = `usage: oh-my-goals <command> [options]
 
 commands:
   decide          rank caller-supplied actions from strict JSON input
   install-skill   install the shared Agent Skill for coding agents
   prolog-check    compare MeTTa-TS rules with the packaged Prolog relations
 
-run "goalchainer <command> --help" for command options`;
+run "oh-my-goals <command> --help" for command options`;
 
-const DECIDE_HELP = `usage: goalchainer decide --input <path|-> [--pretty]
+const DECIDE_HELP = `usage: oh-my-goals decide --input <path|-> [--pretty]
 
 options:
   -i, --input <path|->   read up to 2097152 bytes of strict JSON from a file or stdin
       --pretty           indent JSON output
   -h, --help             show this help`;
 
-const INSTALL_HELP = `usage: goalchainer install-skill [options]
+const INSTALL_HELP = `usage: oh-my-goals install-skill [options]
 
 options:
       --agent <name>        codex, claude, opencode, or all (default: all)
@@ -52,7 +52,7 @@ options:
       --pretty              indent JSON output
   -h, --help                show this help`;
 
-const PROLOG_HELP = `usage: goalchainer prolog-check [--pretty]
+const PROLOG_HELP = `usage: oh-my-goals prolog-check [--pretty]
 
 options:
       --pretty   indent JSON output
@@ -298,7 +298,7 @@ export async function main(argv: string[], io: CliIO = CONSOLE_IO): Promise<numb
     command = parseCli(argv);
   } catch (error) {
     if (!(error instanceof CliUsageError)) throw error;
-    io.stderr(`goalchainer: ${error.message}\n\n${ROOT_HELP}`);
+    io.stderr(`oh-my-goals: ${error.message}\n\n${ROOT_HELP}`);
     return 2;
   }
   try {
@@ -306,10 +306,10 @@ export async function main(argv: string[], io: CliIO = CONSOLE_IO): Promise<numb
   } catch (error) {
     const message = inputError(error);
     if (message !== null) {
-      io.stderr(`goalchainer: invalid input\n${message}`);
+      io.stderr(`oh-my-goals: invalid input\n${message}`);
       return 2;
     }
-    io.stderr(`goalchainer: ${error instanceof Error ? error.message : String(error)}`);
+    io.stderr(`oh-my-goals: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
 }

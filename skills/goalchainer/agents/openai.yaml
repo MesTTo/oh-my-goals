@@ -1,4 +1,0 @@
-interface:
-  display_name: "GoalChainer"
-  short_description: "Rank agent actions against goals and norms"
-  default_prompt: "Use $goalchainer to rank the available actions against my goals, norms, and evidence."

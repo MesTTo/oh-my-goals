@@ -180,7 +180,7 @@ describe("generic GoalChainer core", () => {
         selected: reversed[0]!,
         tiedActionIds: reversed.map((decision) => decision.actionId),
       } as GoalChainerRun),
-    ).toThrow("decisions disagree with goalchainer.metta");
+    ).toThrow("decisions disagree with oh-my-goals.metta");
   });
 
   it("cannot cross the recommendation threshold with tolerated score drift", () => {
@@ -210,7 +210,7 @@ describe("generic GoalChainer core", () => {
         selected: forged,
         automaticExecutionAllowed: true,
       }),
-    ).toThrow("decisions disagree with goalchainer.metta");
+    ).toThrow("decisions disagree with oh-my-goals.metta");
   });
 
   it("blocks forbidden and conflicting options at their strongest norm priority", () => {

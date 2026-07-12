@@ -1,4 +1,4 @@
-// Resolve caller-supplied policy norms through goalchainer.metta.
+// Resolve caller-supplied policy norms through oh-my-goals.metta.
 
 import {
   mettaCall,
@@ -138,7 +138,7 @@ function decodeReasonTree(
 ): void {
   if (value === "ReasonEmpty") return;
   if (!Array.isArray(value)) {
-    throw new Error(`goalchainer.metta returned an invalid reason tree: ${JSON.stringify(value)}`);
+    throw new Error(`oh-my-goals.metta returned an invalid reason tree: ${JSON.stringify(value)}`);
   }
   if (value[0] === "ReasonJoin" && value.length === 3) {
     decodeReasonTree(value[1], actionId, priority, norms, indexes);
@@ -159,7 +159,7 @@ function decodeReasonTree(
     reason[2] < 0 ||
     reason[2] >= norms.length
   ) {
-    throw new Error(`goalchainer.metta returned an invalid reason leaf: ${JSON.stringify(value)}`);
+    throw new Error(`oh-my-goals.metta returned an invalid reason leaf: ${JSON.stringify(value)}`);
   }
   const index = reason[2];
   const norm = norms[index]!;
@@ -169,7 +169,7 @@ function decodeReasonTree(
     norm.priority !== priority ||
     (indexes.length > 0 && indexes[indexes.length - 1]! >= index)
   ) {
-    throw new Error(`goalchainer.metta returned an inconsistent reason leaf at norm ${index}`);
+    throw new Error(`oh-my-goals.metta returned an inconsistent reason leaf at norm ${index}`);
   }
   indexes.push(index);
 }
@@ -189,7 +189,7 @@ function resolutionResult(
     !Number.isSafeInteger(value[2])
   ) {
     throw new Error(
-      `goalchainer.metta returned an invalid norm resolution for ${actionId}: ${JSON.stringify(value)}`,
+      `oh-my-goals.metta returned an invalid norm resolution for ${actionId}: ${JSON.stringify(value)}`,
     );
   }
   const indexes: number[] = [];
@@ -207,7 +207,7 @@ export function resolveNorms(actionId: string, norms: readonly Norm[]): NormReso
   const stable = validateNorms(norms);
   const values = sharedGoalChainerMetta().evalJs(resolutionQuery(actionId, normTree(stable)));
   if (values.length !== 1) {
-    throw new Error(`goalchainer.metta returned ${values.length} norm resolutions for ${actionId}`);
+    throw new Error(`oh-my-goals.metta returned ${values.length} norm resolutions for ${actionId}`);
   }
   return resolutionResult(values[0], actionId, stable);
 }
@@ -227,7 +227,7 @@ export function resolveNormsBatch(
     const group = groups[index]!;
     if (group.length !== 1) {
       throw new Error(
-        `goalchainer.metta returned ${group.length} norm resolutions for ${actionId}`,
+        `oh-my-goals.metta returned ${group.length} norm resolutions for ${actionId}`,
       );
     }
     return [actionId, resolutionResult(group[0], actionId, stable)];

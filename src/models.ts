@@ -80,7 +80,7 @@ export function deriveDecisionStatus(
     missingRequiredCount,
   );
   if (typeof status !== "string" || !DECISION_STATUS_SET.has(status)) {
-    throw new Error(`goalchainer.metta returned an invalid decision status: ${String(status)}`);
+    throw new Error(`oh-my-goals.metta returned an invalid decision status: ${String(status)}`);
   }
   return status as DecisionStatus;
 }

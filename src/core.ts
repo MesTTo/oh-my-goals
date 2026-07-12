@@ -196,7 +196,7 @@ function validatedRun(run: GoalChainerRun): GoalChainerRun {
       (decision, index) => !isDeepStrictEqual(decision, canonical.decisions[index]),
     )
   ) {
-    throw new RangeError("GoalChainer run decisions disagree with goalchainer.metta");
+    throw new RangeError("GoalChainer run decisions disagree with oh-my-goals.metta");
   }
   const suppliedSelected = createDecision(run.selected);
   if (!isDeepStrictEqual(suppliedSelected, canonical.decisions[0])) {
@@ -209,15 +209,15 @@ function validatedRun(run: GoalChainerRun): GoalChainerRun {
     }
   });
   if (!sameStrings(run.tiedActionIds, canonical.tiedActionIds)) {
-    throw new RangeError("GoalChainer run tied action IDs disagree with goalchainer.metta");
+    throw new RangeError("GoalChainer run tied action IDs disagree with oh-my-goals.metta");
   }
   const selectionTied = canonical.tiedActionIds.length > 1;
   if (run.selectionTied !== selectionTied) {
-    throw new RangeError("GoalChainer run selectionTied disagrees with goalchainer.metta");
+    throw new RangeError("GoalChainer run selectionTied disagrees with oh-my-goals.metta");
   }
   if (run.automaticExecutionAllowed !== canonical.automaticExecutionAllowed) {
     throw new RangeError(
-      "GoalChainer run automaticExecutionAllowed disagrees with goalchainer.metta",
+      "GoalChainer run automaticExecutionAllowed disagrees with oh-my-goals.metta",
     );
   }
   return trustRun({

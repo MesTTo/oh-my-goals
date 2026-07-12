@@ -7,9 +7,9 @@ import { runFile } from "@metta-ts/node";
 import { describe, expect, it } from "vitest";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const CONTRACT = join(ROOT, "tests", "goalchainer-contract.metta");
+const CONTRACT = join(ROOT, "tests", "oh-my-goals-contract.metta");
 
-describe("native GoalChainer MeTTa contract", () => {
+describe("native Oh My Goals MeTTa contract", () => {
   it("loads the framework and satisfies every executable assertion", () => {
     const results = runFile(CONTRACT, 1_000_000);
     const queryCount = parseAll(readFileSync(CONTRACT, "utf8"), standardTokenizer())

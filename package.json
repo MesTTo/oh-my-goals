@@ -1,5 +1,5 @@
 {
-  "name": "goalchainer-ts",
+  "name": "oh-my-goals",
   "version": "0.1.0",
   "description": "Native MeTTa decision framework with a TypeScript host, deontic norms, graded evidence, task directives, and Agent Skill integration.",
   "type": "module",
@@ -9,16 +9,17 @@
   "author": "MesTTo",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MesTTo/goalchainer-ts.git"
+    "url": "git+https://github.com/MesTTo/oh-my-goals.git"
   },
   "bugs": {
-    "url": "https://github.com/MesTTo/goalchainer-ts/issues"
+    "url": "https://github.com/MesTTo/oh-my-goals/issues"
   },
-  "homepage": "https://github.com/MesTTo/goalchainer-ts#readme",
+  "homepage": "https://github.com/MesTTo/oh-my-goals#readme",
   "engines": {
     "node": ">=20"
   },
   "bin": {
+    "oh-my-goals": "./dist/cli.js",
     "goalchainer": "./dist/cli.js",
     "goalchainer-ts": "./dist/cli.js"
   },
@@ -30,10 +31,10 @@
   },
   "files": [
     "dist",
-    "metta/goalchainer.metta",
+    "metta/oh-my-goals.metta",
     "assets/gc_directive.pl",
     "assets/gc_score.pl",
-    "skills/goalchainer",
+    "skills/oh-my-goals",
     "ARCHITECTURE.md",
     "LICENSE"
   ],
@@ -41,7 +42,7 @@
     "clean": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc -p tsconfig.json",
     "postbuild": "node --eval \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
-    "check:metta": "metta-ts --check --undefined-symbols metta/goalchainer.metta",
+    "check:metta": "metta-ts --check --undefined-symbols metta/oh-my-goals.metta",
     "cli": "tsx src/cli.ts",
     "test": "vitest run",
     "test:package": "node tests/package-smoke.mjs",

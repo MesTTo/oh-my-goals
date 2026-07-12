@@ -74,7 +74,7 @@ interface CompletedPlan {
 }
 
 const CANONICAL_SKILL_ROOT = resolve(
-  fileURLToPath(new URL("../skills/goalchainer/", import.meta.url)),
+  fileURLToPath(new URL("../skills/oh-my-goals/", import.meta.url)),
 );
 
 const CONCRETE_TARGETS = ["codex", "claude", "opencode"] as const;
@@ -87,14 +87,14 @@ const MAX_SNAPSHOT_TOTAL_BYTES = 4 * 1024 * 1024;
 
 const TARGET_SEGMENTS = {
   project: {
-    codex: [".agents", "skills", "goalchainer"],
-    claude: [".claude", "skills", "goalchainer"],
-    opencode: [".opencode", "skills", "goalchainer"],
+    codex: [".agents", "skills", "oh-my-goals"],
+    claude: [".claude", "skills", "oh-my-goals"],
+    opencode: [".opencode", "skills", "oh-my-goals"],
   },
   user: {
-    codex: [".agents", "skills", "goalchainer"],
-    claude: [".claude", "skills", "goalchainer"],
-    opencode: [".config", "opencode", "skills", "goalchainer"],
+    codex: [".agents", "skills", "oh-my-goals"],
+    claude: [".claude", "skills", "oh-my-goals"],
+    opencode: [".config", "opencode", "skills", "oh-my-goals"],
   },
 } as const satisfies Record<
   SkillInstallScope,
@@ -464,8 +464,8 @@ async function replaceKeepingBackup(
   expected: DestinationSnapshot,
 ): Promise<{ backupRoot: string; backupPath: string }> {
   const parent = dirname(destination);
-  const backupRoot = await mkdtemp(join(parent, ".goalchainer-backup-"));
-  const backupPath = join(backupRoot, "goalchainer");
+  const backupRoot = await mkdtemp(join(parent, ".oh-my-goals-backup-"));
+  const backupPath = join(backupRoot, "oh-my-goals");
 
   try {
     await rename(destination, backupPath);
@@ -540,8 +540,8 @@ async function materializePlan(
   const createdParents = await inspectSafeParentPath(plan.base, parent, true);
   let stagingRoot: string | undefined;
   try {
-    stagingRoot = await mkdtemp(join(parent, ".goalchainer-stage-"));
-    const stagedPath = join(stagingRoot, "goalchainer");
+    stagingRoot = await mkdtemp(join(parent, ".oh-my-goals-stage-"));
+    const stagedPath = join(stagingRoot, "oh-my-goals");
     await writeSnapshot(stagedPath, source);
     const stagedSnapshot = await snapshotTree(stagedPath, "Staged skill");
     if (!treesEqual(source, stagedSnapshot)) {
@@ -706,7 +706,7 @@ async function planTarget(
   };
 }
 
-/** Installs the packaged GoalChainer Agent Skill into one or more agent layouts. */
+/** Installs the packaged Oh My Goals Agent Skill into one or more agent layouts. */
 export async function installAgentSkill(
   options: SkillInstallOptions,
 ): Promise<SkillInstallResult> {

@@ -1,4 +1,4 @@
-// Subjective-Logic NARS opinions and deduction through goalchainer.metta.
+// Subjective-Logic NARS opinions and deduction through oh-my-goals.metta.
 
 import {
   mettaCall,
@@ -87,18 +87,18 @@ function readOpinion(value: unknown, path: string): Opinion {
       (entry) => typeof entry !== "number" || !Number.isFinite(entry) || entry < 0 || entry > 1,
     )
   ) {
-    throw new Error(`goalchainer.metta returned an invalid opinion for ${path}`);
+    throw new Error(`oh-my-goals.metta returned an invalid opinion for ${path}`);
   }
   const [, b, d, u, a] = value as [string, number, number, number, number];
   if (Math.abs(b + d + u - 1) > 1e-12) {
-    throw new Error(`goalchainer.metta returned a non-normalized opinion for ${path}`);
+    throw new Error(`oh-my-goals.metta returned a non-normalized opinion for ${path}`);
   }
   return { b, d, u, a };
 }
 
 function readExpectation(value: unknown, path: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
-    throw new Error(`goalchainer.metta returned an invalid expectation for ${path}`);
+    throw new Error(`oh-my-goals.metta returned an invalid expectation for ${path}`);
   }
   return value;
 }
@@ -142,7 +142,7 @@ export function assess(
     mettaFloat(evidence.baseRate),
   ));
   if (values.length !== 1) {
-    throw new Error(`goalchainer.metta returned ${values.length} SNARS assessments`);
+    throw new Error(`oh-my-goals.metta returned ${values.length} SNARS assessments`);
   }
   const result = values[0];
   if (
@@ -154,7 +154,7 @@ export function assess(
     result[3] !== object ||
     result[4] !== source
   ) {
-    throw new Error(`goalchainer.metta returned an invalid SNARS assessment: ${JSON.stringify(result)}`);
+    throw new Error(`oh-my-goals.metta returned an invalid SNARS assessment: ${JSON.stringify(result)}`);
   }
   const opinion = roundOpinion(readOpinion(result[5], "assessment"));
   readExpectation(result[6], "assessment native result");
@@ -206,7 +206,7 @@ export function derive(
     mettaString(source2),
   ));
   if (values.length !== 1) {
-    throw new Error(`goalchainer.metta returned ${values.length} SNARS deductions, expected one`);
+    throw new Error(`oh-my-goals.metta returned ${values.length} SNARS deductions, expected one`);
   }
   const result = values[0];
   if (
@@ -219,7 +219,7 @@ export function derive(
     result[4] !== source1 ||
     result[5] !== source2
   ) {
-    throw new Error(`goalchainer.metta returned an invalid SNARS deduction: ${JSON.stringify(result)}`);
+    throw new Error(`oh-my-goals.metta returned an invalid SNARS deduction: ${JSON.stringify(result)}`);
   }
   const premise1 = roundOpinion(readOpinion(result[6], "first premise"));
   const premise2 = roundOpinion(readOpinion(result[7], "second premise"));

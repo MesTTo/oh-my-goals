@@ -1,6 +1,6 @@
-; Native GoalChainer framework contract.
+; Native Oh My Goals framework contract.
 
-!(import! &self "../metta/goalchainer.metta")
+!(import! &self "../metta/oh-my-goals.metta")
 
 !(assertEqual
    (gc-evidence-expectation 1.0 0.5)

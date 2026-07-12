@@ -1,4 +1,4 @@
-// Reconcile individual and collective goal preferences in goalchainer.metta.
+// Reconcile individual and collective goal preferences in oh-my-goals.metta.
 
 import { isDeepStrictEqual } from "node:util";
 
@@ -22,7 +22,7 @@ export interface MotivationOptions {
    * used when a correlation is omitted. */
   correlations?: Readonly<Record<string, Readonly<Record<string, number>>>>;
   /** Per-action risk in [0, 1]. The default is one minus evidence strength,
-   * rounded to three decimal places by goalchainer.metta. */
+   * rounded to three decimal places by oh-my-goals.metta. */
   risks?: Readonly<Record<string, number>>;
 }
 
@@ -229,11 +229,11 @@ function nativeCandidate(value: unknown, index: number, goalCount: number): Cand
     value[3] < 0 ||
     value[3] > 1
   ) {
-    throw new Error(`goalchainer.metta returned an invalid motivation candidate at index ${index}`);
+    throw new Error(`oh-my-goals.metta returned an invalid motivation candidate at index ${index}`);
   }
   const corr = finiteVector(value[2] as number[], `native motivation candidate ${index}`, [-1, 1]);
   if (corr.length !== goalCount) {
-    throw new Error(`goalchainer.metta returned the wrong correlation count at index ${index}`);
+    throw new Error(`oh-my-goals.metta returned the wrong correlation count at index ${index}`);
   }
   return Object.freeze({ id: value[1], corr, risk: value[3] });
 }
@@ -248,7 +248,7 @@ function optionalCandidate(value: unknown, path: string): string | null {
   ) {
     return value[1];
   }
-  throw new Error(`goalchainer.metta returned an invalid ${path}`);
+  throw new Error(`oh-my-goals.metta returned an invalid ${path}`);
 }
 
 function decodeMotivation(
@@ -258,14 +258,14 @@ function decodeMotivation(
   candidates: readonly Candidate[],
 ): MotivationResult {
   if (!Array.isArray(value) || value.length !== 7 || value[0] !== "MotivationResult") {
-    throw new Error("goalchainer.metta returned an invalid motivation result");
+    throw new Error("oh-my-goals.metta returned an invalid motivation result");
   }
   const individualPull = optionalCandidate(value[1], "individual goal pull");
   const collectivePull = optionalCandidate(value[2], "collective goal pull");
   const individualPreference = optionalCandidate(value[3], "individual preference");
   const collectivePreference = optionalCandidate(value[4], "collective preference");
   if (!Array.isArray(value[5])) {
-    throw new Error("goalchainer.metta returned invalid motivation consensus scores");
+    throw new Error("oh-my-goals.metta returned invalid motivation consensus scores");
   }
   const consensusScores: Record<string, number> = Object.create(null) as Record<string, number>;
   for (const row of value[5]) {
@@ -277,12 +277,12 @@ function decodeMotivation(
       typeof row[2] !== "number" ||
       !Number.isFinite(row[2])
     ) {
-      throw new Error("goalchainer.metta returned an invalid motivation score row");
+      throw new Error("oh-my-goals.metta returned an invalid motivation score row");
     }
     consensusScores[row[1]] = row[2];
   }
   if (typeof value[6] !== "string") {
-    throw new Error("goalchainer.metta returned an invalid motivation consensus action");
+    throw new Error("oh-my-goals.metta returned an invalid motivation consensus action");
   }
   const result = snapshotMotivationResult({
     engine: MOTIVATION_ENGINE,
@@ -328,7 +328,7 @@ export function createMotivationResult(input: MotivationResult): MotivationResul
     supplied.candidates,
   );
   if (!isDeepStrictEqual(supplied, expected)) {
-    throw new RangeError("motivation result is inconsistent with goalchainer.metta");
+    throw new RangeError("motivation result is inconsistent with oh-my-goals.metta");
   }
   VALID_RESULTS.add(supplied);
   return supplied;
@@ -422,12 +422,12 @@ export function consensusDecision(
     ...actions.map((action) => mettaCall("gc-motivation-candidate", action)),
   ]);
   if (groups.some((group) => group.length !== 1)) {
-    throw new Error("goalchainer.metta returned a non-deterministic motivation projection");
+    throw new Error("oh-my-goals.metta returned a non-deterministic motivation projection");
   }
   const individualValue = groups[0]![0];
   const collectiveValue = groups[1]![0];
   if (!Array.isArray(individualValue) || !Array.isArray(collectiveValue)) {
-    throw new Error("goalchainer.metta returned invalid motivation goal masks");
+    throw new Error("oh-my-goals.metta returned invalid motivation goal masks");
   }
   const individual = finiteVector(individualValue as number[], "native individual goals", [0, 1]);
   const collective = finiteVector(collectiveValue as number[], "native collective goals", [0, 1]);
@@ -435,7 +435,7 @@ export function consensusDecision(
     individual.length !== validatedScenario.goals.length ||
     collective.length !== validatedScenario.goals.length
   ) {
-    throw new Error("goalchainer.metta returned invalid motivation scenario dimensions");
+    throw new Error("oh-my-goals.metta returned invalid motivation scenario dimensions");
   }
   const candidates = groups.slice(2).map((group, index) =>
     nativeCandidate(group[0], index, validatedScenario.goals.length)

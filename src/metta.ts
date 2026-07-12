@@ -25,7 +25,7 @@ import {
 import { pythonFloatSum, roundN } from "./rounding.js";
 import { registerGoalChainerBulkOperations } from "./metta_bulk.js";
 
-const MODULE_URL = new URL("../metta/goalchainer.metta", import.meta.url);
+const MODULE_URL = new URL("../metta/oh-my-goals.metta", import.meta.url);
 let moduleSource: string | undefined;
 let moduleAtoms: readonly TopAtom[] | undefined;
 
@@ -38,7 +38,7 @@ function programAtoms(): readonly TopAtom[] {
   if (moduleAtoms === undefined) {
     const parsed = parseAll(source(), standardTokenizer());
     if (parsed.some((top) => top.bang)) {
-      throw new Error("goalchainer.metta must not contain top-level queries");
+      throw new Error("oh-my-goals.metta must not contain top-level queries");
     }
     moduleAtoms = Object.freeze(parsed.map((top) => Object.freeze(top)));
   }
@@ -271,7 +271,7 @@ export function mettaOne(
 ): unknown {
   const results = db.evalJs(mettaCall(name, ...args));
   if (results.length !== 1) {
-    throw new Error(`goalchainer.metta relation ${name} returned ${results.length} results`);
+    throw new Error(`oh-my-goals.metta relation ${name} returned ${results.length} results`);
   }
   return results[0];
 }

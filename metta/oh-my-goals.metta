@@ -1,4 +1,4 @@
-; GoalChainer reasoning relations for MeTTa TS.
+; Oh My Goals reasoning relations for MeTTa TS.
 ; TypeScript loads this file and supplies validated facts and query arguments.
 
 ; Structural inputs are Atom-typed so the evaluator does not call tuple data.

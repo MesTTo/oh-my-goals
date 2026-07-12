@@ -1,37 +1,67 @@
-# goalchainer-ts
+# oh-my-goals
 
-GoalChainer ranks actions against explicit goals, policy norms, and graded evidence before an agent acts. The reusable decision rules are written in [MeTTa](metta/goalchainer.metta) and run on [MeTTa TS 1.1.4](https://github.com/MesTTo/MeTTa-TS). The package accepts caller-supplied structured data and has no built-in scenario or action handlers.
+A native MeTTa decision gate for coding agents.
 
-[`metta/goalchainer.metta`](metta/goalchainer.metta) declares the semantics for norm resolution, goal analysis, the default evidence expectation formula, scoring, ranking, motivation consensus, the exported PLN and SNARS formulas, and directive state queries. TypeScript validates inputs, encodes and decodes atoms, manages files and processes, connects optional Prolog predicates, runs bounded numeric and structural grounded primitives, and dispatches caller-owned actions. The large-input primitives mirror specific goal collection, motivation projection, stable ranking, and PLN applicability steps from the bounded MeTTa paths. See [ARCHITECTURE.md](ARCHITECTURE.md) for the exact boundary and parity scope.
+oh-my-goals ranks proposed actions against explicit goals, policy norms, and graded evidence before an agent acts. It returns an auditable decision receipt and leaves execution with the caller.
 
-## Install
+For a verified change and a policy-forbidden unverified alternative, selected receipt fields are:
 
-Node.js 20 or newer is required.
-The JavaScript entry point is ESM-only. CommonJS callers must use dynamic `import()`.
+```json
+{
+  "selected": "apply-verified-change",
+  "status": "recommended",
+  "selection_tied": false,
+  "automatic_execution_allowed": true
+}
+```
 
-Until the package is published to npm, install a verified tarball from a checkout:
+## What it is
+
+The policy and ranking rules live in [`metta/oh-my-goals.metta`](metta/oh-my-goals.metta). MeTTa is a symbolic programming language, and [MeTTa TS 1.1.4](https://github.com/MesTTo/MeTTa-TS) runs those rules inside the TypeScript host. TypeScript validates strict JSON, encodes and decodes atoms, handles files and processes, connects the optional Prolog checks, and dispatches only caller-owned action handlers. See [ARCHITECTURE.md](ARCHITECTURE.md) for the exact runtime boundary.
+
+## Why
+
+An agent's preferred action is a proposal, not authority to act. oh-my-goals records the declared goals, applicable norms, evidence calibration, score, tie state, and execution eligibility before an action handler can run.
+
+## Quickstart
+
+Node.js 20 or newer is required. The package is not yet published to npm, so run it from a source checkout:
 
 ```bash
-cd /path/to/goalchainer-ts
+git clone https://github.com/MesTTo/oh-my-goals.git
+cd oh-my-goals
+npm ci
+npm run build
+node dist/cli.js --help
+```
+
+The JavaScript entry point is ESM-only. CommonJS callers must use dynamic `import()`. SWI-Prolog is optional and starts only through the explicit Prolog API or `prolog-check` command.
+
+To install the current checkout into another project, pack the verified source:
+
+```bash
+cd /path/to/oh-my-goals
 npm ci
 npm run verify
 mkdir -p ai-tmp
 npm pack --pack-destination ai-tmp
 
 cd /path/to/consumer-project
-npm install /path/to/goalchainer-ts/ai-tmp/goalchainer-ts-0.1.0.tgz
-npx --no-install goalchainer --help
+npm install /path/to/oh-my-goals/ai-tmp/oh-my-goals-0.1.0.tgz
+npx --no-install oh-my-goals --help
 ```
 
-After publication, consumers can use `npm install goalchainer-ts`.
+## Highlights
 
-SWI-Prolog is optional. It is started only by `decideActionsWithProlog`,
-`verifyScorePrologParity`, `checkDirectivePrologParity`, or the `prolog-check` CLI
-command.
+- MeTTa owns norm resolution, goal analysis, scoring, status assignment, stable ranking, tie handling, motivation consensus, and the selected PLN and SNARS formulas.
+- A recommendation is not execution authority. Ties, forbidden actions, conflicts, missing required goals, and unavailable handlers block automatic execution.
+- The same Agent Skill protocol works with Claude Code, Codex, and OpenCode. The framework does not call hosted models or read their authentication state.
+- Boundary tests cover 5,000 goals, 1,000 ranked actions, and 1,000 motivation candidates across native and large-input paths.
+- Optional SWI-Prolog checks compare only the named score and directive relations.
 
 ## Decide from JSON
 
-The [complete input schema](skills/goalchainer/references/input-schema.md) lists every field and default. CLI input is limited to 2 MiB.
+The [complete input schema](skills/oh-my-goals/references/input-schema.md) lists every field and default. CLI input is limited to 2 MiB.
 
 Write a scenario with goals, norms, actions, and any grounded evidence:
 
@@ -98,7 +128,7 @@ test result.
 Run the decision gate:
 
 ```bash
-npx --no-install goalchainer decide --input scenario.json --pretty
+npx --no-install oh-my-goals decide --input scenario.json --pretty
 ```
 
 Use `--input -` to read JSON from stdin. Unknown fields, duplicate IDs, invalid probabilities, and dangling goal or action references are rejected with exit code 2. A valid decision writes JSON to stdout. Runtime failures use exit code 1.
@@ -117,7 +147,7 @@ import {
   executeDecision,
   explainDecisions,
   goalChainerRunToJson,
-} from "goalchainer-ts";
+} from "oh-my-goals";
 
 const chainer = new GoalChainer();
 const run = chainer.evaluate(input);
@@ -172,9 +202,9 @@ ontology into these records before loading it.
 The package ships one [Agent Skills](https://agentskills.io/specification) definition for Claude Code, Codex, and OpenCode. The installer copies the same canonical skill into each tool's supported location.
 
 ```bash
-npx --no-install goalchainer install-skill --agent codex --scope project
-npx --no-install goalchainer install-skill --agent claude --scope project
-npx --no-install goalchainer install-skill --agent opencode --scope project
+npx --no-install oh-my-goals install-skill --agent codex --scope project
+npx --no-install oh-my-goals install-skill --agent claude --scope project
+npx --no-install oh-my-goals install-skill --agent opencode --scope project
 ```
 
 Use `--agent all` to install the shared `.agents/skills` layout used by Codex and OpenCode plus the `.claude/skills` layout used by Claude Code. Use `--agent opencode` when you specifically want `.opencode/skills` instead. User installs target the corresponding directories under your home directory. Existing differing files or modes are never replaced unless you pass `--force`.
@@ -183,31 +213,39 @@ OpenCode also scans `.claude/skills`. In a project installed with `--agent all`,
 OpenCode may log a duplicate-name warning for the two identical copies. Install
 only the target you use when you want one discovery entry.
 
-The skill tells the coding agent to derive structured input from the current task, keep goals, norms, and evidence calibration attributable to the user or repository, call the JSON CLI, and stop unless automatic execution is allowed. GoalChainer does not call a hosted model or read the agent's authentication state.
+Earlier local skill installs used a `goalchainer` directory. The installer does not delete user-owned skill trees. Install `oh-my-goals`, check that the new skill is discovered, then remove the old directory if you no longer need it. The `goalchainer` and `goalchainer-ts` binaries remain compatibility aliases during this transition.
+
+The skill tells the coding agent to derive structured input from the current task, keep goals, norms, and evidence calibration attributable to the user or repository, call the JSON CLI, and stop unless automatic execution is allowed. oh-my-goals does not call a hosted model or read the agent's authentication state.
 
 ## MeTTa and Prolog
 
-The framework pins `@metta-ts/core`, `@metta-ts/edsl`, `@metta-ts/hyperon`, `@metta-ts/prolog`, and the `@metta-ts/node` development CLI to 1.1.4. The packaged [`goalchainer.metta`](metta/goalchainer.metta) module declares the policy and reasoning rules. Its native paths use the MeTTa TS stdlib operations `foldl-atom`, `map-atom`, `filter-atom`, `msort`, and `is-member`. The TypeScript host registers low-level operations for large compensated vector sums and dot products, normalization, mask and correlation mapping, candidate validation, structural tree construction, Python-compatible rounding, indexed PLN matching, and stack-safe evaluator batching.
+The framework pins `@metta-ts/core`, `@metta-ts/edsl`, `@metta-ts/hyperon`, `@metta-ts/prolog`, and the `@metta-ts/node` development CLI to 1.1.4. The packaged [`oh-my-goals.metta`](metta/oh-my-goals.metta) module declares the policy and reasoning rules. Its native paths use the MeTTa TS stdlib operations `foldl-atom`, `map-atom`, `filter-atom`, `msort`, and `is-member`. The TypeScript host registers low-level operations for large compensated vector sums and dot products, normalization, mask and correlation mapping, candidate validation, structural tree construction, Python-compatible rounding, indexed PLN matching, and stack-safe evaluator batching.
 
 MeTTa derives coverage from goal aggregates, derives every decision row, computes every motivation score and strict maximum, selects the consensus, and computes PLN deductions and revision. Grounded large-input paths mirror satisfied-goal membership and partitioning, mask and correlation mapping, stable descending-score ranking and epsilon ties, and PLN matching by action and predicate. MeTTa still decides automatic-execution eligibility. A raw-shape router returns a deferred native relation for bounded scalar-only motivation inputs and sends large, reducible, or malformed inputs to the motivation bridge. The bridge validates `[0,1]` membership masks, candidate dimensions, correlations, risks, and identities. Reducible scalar and identity terms must have exactly one normal form. A grounded kernel computes the two compensated dot products and builds a balanced pull tree. `gc-motivation-consensus-canonical` subtracts risk, applies the disagreement penalty, merges all five strict maxima, preserves declaration-order ties, and selects the consensus in MeTTa. The router and bridge do not compare scores or select winners.
 
 SWI-Prolog remains an optional interoperability path. The package imports the relations in `assets/gc_score.pl` and `assets/gc_directive.pl` through `@metta-ts/prolog`, then compares them with the corresponding MeTTa score, decision-status, and directive-state relations:
 
 ```bash
-npx --no-install goalchainer prolog-check --pretty
+npx --no-install oh-my-goals prolog-check --pretty
 ```
 
 The command starts the local `swipl` executable, runs both checks, disposes the bridge, and exits nonzero if a relation differs. It checks only those named relations. Prolog is not the framework's primary evaluator and the command does not claim parity for every MeTTa relation.
 
 ProbMeTTa is not ported or bundled. It targets PeTTa, which compiles MeTTa programs to SWI-Prolog. A caller can connect a separately managed PeTTa and ProbMeTTa process through `EvidenceReasoner` or `ContextualQueryEvidenceReasoner`, then return the resulting strength, confidence, source, and proof data. That adapter is optional and remains outside the native MeTTa TS rule module.
 
-The framework ports the reusable relations exposed by this package. Its PLN code implements the selected deduction and count-space revision formulas. Its SNARS code implements opinion construction and two-premise deduction. The deontic and motivation modules implement the static policy and consensus slices used by the decision gate. These exports are not replacements for complete chaining, deontic-logic, probabilistic-logic, or NARS systems.
+The framework ports the reusable relations exposed by this package. Its PLN code implements the selected deduction and count-space revision formulas. Its SNARS code implements opinion construction and two-premise deduction. The deontic and motivation modules implement the static policy and consensus slices used by the decision gate. These exports are not replacements for complete chaining, deontic logic, probabilistic logic, or NARS systems.
+
+## Status
+
+oh-my-goals is at version 0.1.0 and is not yet published to npm. `npm run verify` checks the MeTTa module, TypeScript API, CLI, packed tarball, and Agent Skill. The test suite runs the named Prolog parity checks when SWI-Prolog is installed.
+
+The package implements the documented decision relations. It is not a general theorem prover, a complete planner, a probabilistic logic runtime, or a full NARS implementation.
 
 ## Development
 
 ```bash
 npm ci
-npx metta-ts --check metta/goalchainer.metta
+npx metta-ts --check metta/oh-my-goals.metta
 npm test
 npm run build
 npm run test:package

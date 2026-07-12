@@ -43,7 +43,7 @@ function nativeSelectionLabels(decisions: readonly Decision[]): SelectionLabel[]
   ));
   if (rankingResults.length !== 1) {
     throw new Error(
-      `goalchainer.metta returned ${rankingResults.length} explanation rankings`,
+      `oh-my-goals.metta returned ${rankingResults.length} explanation rankings`,
     );
   }
   const [rankedRows, tiedRows] = nativeRankingFields(rankingResults[0], "explanation");
@@ -58,7 +58,7 @@ function nativeSelectionLabels(decisions: readonly Decision[]): SelectionLabel[]
       !Number.isFinite(row[3]) ||
       typeof row[4] !== "string"
     ) {
-      throw new Error(`goalchainer.metta returned an invalid explanation row at ${index}`);
+      throw new Error(`oh-my-goals.metta returned an invalid explanation row at ${index}`);
     }
     const decisionIndex = row[1] as number;
     const decision = decisions[decisionIndex];
@@ -68,7 +68,7 @@ function nativeSelectionLabels(decisions: readonly Decision[]): SelectionLabel[]
       row[3] !== decision.score ||
       row[4] !== decision.status
     ) {
-      throw new Error(`goalchainer.metta returned an inconsistent explanation row at ${index}`);
+      throw new Error(`oh-my-goals.metta returned an inconsistent explanation row at ${index}`);
     }
     return decisionIndex;
   });
@@ -87,7 +87,7 @@ function nativeSelectionLabels(decisions: readonly Decision[]): SelectionLabel[]
     ) ||
     new Set(tiedIndexes).size !== tiedIndexes.length
   ) {
-    throw new Error("goalchainer.metta returned invalid tied explanation rows");
+    throw new Error("oh-my-goals.metta returned invalid tied explanation rows");
   }
   const tied = new Set<number>(tiedIndexes as number[]);
   const selectionResults = db.evalJsMany(decisions.map((decision, index) =>
@@ -104,7 +104,7 @@ function nativeSelectionLabels(decisions: readonly Decision[]): SelectionLabel[]
       typeof values[0] !== "string" ||
       !(values[0] in SELECTION_PREFIXES)
     ) {
-      throw new Error(`goalchainer.metta returned an invalid selection label at ${index}`);
+      throw new Error(`oh-my-goals.metta returned an invalid selection label at ${index}`);
     }
     return values[0] as SelectionLabel;
   });

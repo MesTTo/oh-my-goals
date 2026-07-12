@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -149,10 +150,10 @@ try {
     "package.json",
     "assets/gc_directive.pl",
     "assets/gc_score.pl",
-    "metta/goalchainer.metta",
-    "skills/goalchainer/SKILL.md",
-    "skills/goalchainer/references/input-schema.md",
-    "skills/goalchainer/agents/openai.yaml",
+    "metta/oh-my-goals.metta",
+    "skills/oh-my-goals/SKILL.md",
+    "skills/oh-my-goals/references/input-schema.md",
+    "skills/oh-my-goals/agents/openai.yaml",
     ...moduleStems.flatMap((stem) => [
       `dist/${stem}.js`,
       `dist/${stem}.js.map`,
@@ -179,10 +180,10 @@ try {
     "dist/skill_installer.js",
     "assets/gc_directive.pl",
     "assets/gc_score.pl",
-    "metta/goalchainer.metta",
-    "skills/goalchainer/SKILL.md",
-    "skills/goalchainer/references/input-schema.md",
-    "skills/goalchainer/agents/openai.yaml",
+    "metta/oh-my-goals.metta",
+    "skills/oh-my-goals/SKILL.md",
+    "skills/oh-my-goals/references/input-schema.md",
+    "skills/oh-my-goals/agents/openai.yaml",
     "ARCHITECTURE.md",
     "README.md",
     "LICENSE",
@@ -200,13 +201,13 @@ try {
   const tarball = resolve(packs, packResult.filename);
   writeFileSync(
     join(consumer, "package.json"),
-    JSON.stringify({ name: "goalchainer-package-consumer", version: "1.0.0", private: true }),
+    JSON.stringify({ name: "oh-my-goals-package-consumer", version: "1.0.0", private: true }),
   );
   run(NPM, ["install", tarball, "--ignore-scripts", "--no-audit", "--no-fund"], consumer);
   writeFileSync(
     join(consumer, "consumer.ts"),
     [
-      'import type { DecisionRanking } from "goalchainer-ts";',
+      'import type { DecisionRanking } from "oh-my-goals";',
       "declare const ranking: DecisionRanking;",
       "const allowed: boolean = ranking.automaticExecutionAllowed;",
       "void allowed;",
@@ -235,12 +236,12 @@ try {
   const installedMetta = join(
     consumer,
     "node_modules",
-    "goalchainer-ts",
+    "oh-my-goals",
     "metta",
-    "goalchainer.metta",
+    "oh-my-goals.metta",
   );
   const scoreProgram = `
-    const { scoreActions } = await import("goalchainer-ts");
+    const { scoreActions } = await import("oh-my-goals");
     process.stdout.write(JSON.stringify(scoreActions([["permitted", 0, 0, 1]])));
   `;
   const readInstalledScore = () => {
@@ -281,7 +282,7 @@ try {
     ].join("\n"),
   );
   const apiProgram = `
-    const m = await import("goalchainer-ts");
+    const m = await import("oh-my-goals");
     const input = ${serializedInput};
     const run = m.runGoalChainer(input);
     const ontology = m.loadColoreContext(${JSON.stringify(ontologyPath)});
@@ -296,17 +297,20 @@ try {
 
   const executable = (name) =>
     join(consumer, "node_modules", ".bin", process.platform === "win32" ? `${name}.cmd` : name);
-  const primary = executable("goalchainer");
-  const alias = executable("goalchainer-ts");
+  const primary = executable("oh-my-goals");
+  const compatibilityAliases = [executable("goalchainer"), executable("goalchainer-ts")];
+  for (const alias of compatibilityAliases) {
+    assert.equal(existsSync(alias), true, `compatibility CLI alias is missing: ${alias}`);
+  }
   const inputPath = join(consumer, "input.json");
   writeFileSync(inputPath, serializedInput);
 
-  for (const bin of [primary, alias]) {
-    const result = run(bin, ["decide", "--input", inputPath], consumer);
-    const payload = JSON.parse(result.stdout);
-    assert.equal(payload.selected, "verified-action");
-    assert.equal(payload.status, "recommended");
-    assert.equal(payload.automatic_execution_allowed, true);
+  for (const bin of [primary, ...compatibilityAliases]) {
+    const decision = run(bin, ["decide", "--input", inputPath], consumer);
+    const decisionPayload = JSON.parse(decision.stdout);
+    assert.equal(decisionPayload.selected, "verified-action");
+    assert.equal(decisionPayload.status, "recommended");
+    assert.equal(decisionPayload.automatic_execution_allowed, true);
   }
 
   const stdin = run(primary, ["decide", "--input", "-"], consumer, 0, serializedInput);
@@ -315,9 +319,9 @@ try {
   assert.match(run(primary, ["decide", "--input", "-"], consumer, 2, "{").stderr, /invalid JSON/);
 
   const paths = {
-    codex: [".agents", "skills", "goalchainer"],
-    claude: [".claude", "skills", "goalchainer"],
-    opencode: [".opencode", "skills", "goalchainer"],
+    codex: [".agents", "skills", "oh-my-goals"],
+    claude: [".claude", "skills", "oh-my-goals"],
+    opencode: [".opencode", "skills", "oh-my-goals"],
   };
   for (const [agent, segments] of Object.entries(paths)) {
     const project = join(consumer, `project-${agent}`);
@@ -328,7 +332,7 @@ try {
       consumer,
     );
     assert.equal(JSON.parse(installed.stdout).installed.length, 1);
-    assert.match(readFileSync(join(project, ...segments, "SKILL.md"), "utf8"), /name: goalchainer/);
+    assert.match(readFileSync(join(project, ...segments, "SKILL.md"), "utf8"), /name: oh-my-goals/);
   }
 
   if (spawnSync("swipl", ["--version"], { encoding: "utf8" }).status === 0) {

@@ -20,18 +20,18 @@ import {
 } from "../src/skill_installer.js";
 
 const REPOSITORY_ROOT = resolve(process.cwd());
-const CANONICAL_SKILL_ROOT = join(REPOSITORY_ROOT, "skills", "goalchainer");
+const CANONICAL_SKILL_ROOT = join(REPOSITORY_ROOT, "skills", "oh-my-goals");
 const TEST_TEMP_PARENT = join(REPOSITORY_ROOT, "ai-tmp");
 
 type ConcreteAgent = Exclude<AgentTarget, "all">;
 
 const EXPECTED_RELATIVE_PATHS = {
-  "project:codex": join(".agents", "skills", "goalchainer"),
-  "project:claude": join(".claude", "skills", "goalchainer"),
-  "project:opencode": join(".opencode", "skills", "goalchainer"),
-  "user:codex": join(".agents", "skills", "goalchainer"),
-  "user:claude": join(".claude", "skills", "goalchainer"),
-  "user:opencode": join(".config", "opencode", "skills", "goalchainer"),
+  "project:codex": join(".agents", "skills", "oh-my-goals"),
+  "project:claude": join(".claude", "skills", "oh-my-goals"),
+  "project:opencode": join(".opencode", "skills", "oh-my-goals"),
+  "user:codex": join(".agents", "skills", "oh-my-goals"),
+  "user:claude": join(".claude", "skills", "oh-my-goals"),
+  "user:opencode": join(".config", "opencode", "skills", "oh-my-goals"),
 } as const satisfies Record<`${SkillInstallScope}:${ConcreteAgent}`, string>;
 
 interface TestRoots {
@@ -276,8 +276,8 @@ describe("installAgentSkill", () => {
     expect(
       readdirSync(dirname(destination)).filter(
         (name) =>
-          name.startsWith(".goalchainer-stage-") ||
-          name.startsWith(".goalchainer-backup-"),
+          name.startsWith(".oh-my-goals-stage-") ||
+          name.startsWith(".oh-my-goals-backup-"),
       ),
     ).toEqual([]);
   });
@@ -296,7 +296,7 @@ describe("installAgentSkill", () => {
     expect(readFileSync(join(destination, "SKILL.md"), "utf8")).toBe(changedSkill);
     expect(
       readdirSync(dirname(destination)).filter((name) =>
-        name.startsWith(".goalchainer-stage-"),
+        name.startsWith(".oh-my-goals-stage-"),
       ),
     ).toEqual([]);
   });
@@ -315,8 +315,8 @@ describe("installAgentSkill", () => {
     expect(existsSync(join(destination, "obsolete.txt"))).toBe(false);
     expect(
       readdirSync(dirname(destination)).filter((name) =>
-        name.startsWith(".goalchainer-stage-") ||
-        name.startsWith(".goalchainer-backup-"),
+        name.startsWith(".oh-my-goals-stage-") ||
+        name.startsWith(".oh-my-goals-backup-"),
       ),
     ).toEqual([]);
   });
@@ -457,13 +457,13 @@ describe("installAgentSkill", () => {
         expectCanonicalTree(destination);
         expect(
           readdirSync(dirname(destination)).filter((name) =>
-            name.startsWith(".goalchainer-backup-"),
+            name.startsWith(".oh-my-goals-backup-"),
           ),
         ).toEqual([]);
       } finally {
         for (const name of readdirSync(dirname(destination))) {
-          if (!name.startsWith(".goalchainer-backup-")) continue;
-          const retainedReference = join(dirname(destination), name, "goalchainer", "references");
+          if (!name.startsWith(".oh-my-goals-backup-")) continue;
+          const retainedReference = join(dirname(destination), name, "oh-my-goals", "references");
           if (existsSync(retainedReference)) chmodSync(retainedReference, 0o700);
         }
       }
@@ -561,7 +561,7 @@ describe("installAgentSkill", () => {
       installAgentSkill(installerOptions(roots, "codex", "project", true)),
     ).rejects.toThrow(/destination parent is a symbolic link/);
 
-    expect(existsSync(join(external, "skills", "goalchainer"))).toBe(false);
+    expect(existsSync(join(external, "skills", "oh-my-goals"))).toBe(false);
   });
 
   it("rejects symlinks nested inside an existing destination", async () => {

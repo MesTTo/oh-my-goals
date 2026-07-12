@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const SRC = join(ROOT, "src");
-const METTA = join(ROOT, "metta", "goalchainer.metta");
+const METTA = join(ROOT, "metta", "oh-my-goals.metta");
 
 const EDSL_BOUNDARIES = new Map<string, ReadonlySet<string>>([
   ["src/metta.ts", new Set(["@metta-ts/edsl"])],

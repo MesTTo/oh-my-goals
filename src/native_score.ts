@@ -94,7 +94,7 @@ function decisionQuery(row: DecideActionRow): Term {
 
 function readScore(value: unknown, path: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`goalchainer.metta returned an invalid score for ${path}`);
+    throw new Error(`oh-my-goals.metta returned an invalid score for ${path}`);
   }
   return value;
 }
@@ -109,7 +109,7 @@ function readDecision(value: unknown, path: string): NativeDecision {
     typeof value[2] !== "string" ||
     !NATIVE_DECISION_STATUSES.has(value[2])
   ) {
-    throw new Error(`goalchainer.metta returned an invalid decision for ${path}`);
+    throw new Error(`oh-my-goals.metta returned an invalid decision for ${path}`);
   }
   return [value[1], value[2] as NativeDecisionStatus];
 }
@@ -122,7 +122,7 @@ export function scoreActions(rows: readonly ScoreActionRow[]): number[] {
   const groups = sharedGoalChainerMetta().evalJsMany(rows.map(scoreQuery));
   return groups.map((values, index) => {
     if (values.length !== 1) {
-      throw new Error(`goalchainer.metta returned ${values.length} scores for rows[${index}]`);
+      throw new Error(`oh-my-goals.metta returned ${values.length} scores for rows[${index}]`);
     }
     return readScore(values[0], `rows[${index}]`);
   });
@@ -135,7 +135,7 @@ export function decideActions(rows: readonly DecideActionRow[]): NativeDecision[
   const groups = sharedGoalChainerMetta().evalJsMany(rows.map(decisionQuery));
   return groups.map((values, index) => {
     if (values.length !== 1) {
-      throw new Error(`goalchainer.metta returned ${values.length} decisions for rows[${index}]`);
+      throw new Error(`oh-my-goals.metta returned ${values.length} decisions for rows[${index}]`);
     }
     return readDecision(values[0], `rows[${index}]`);
   });
