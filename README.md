@@ -1,43 +1,165 @@
 # oh-my-goals
 
-A native MeTTa decision gate for coding agents.
+**A local decision gate for coding agents.**
 
-oh-my-goals ranks proposed actions against explicit goals, policy norms, and graded evidence before an agent acts. It returns an auditable decision receipt and leaves execution with the caller.
+Give Oh My Goals the actions an agent could take, the outcomes you care about,
+the rules that require or forbid actions, and the evidence for each choice. It
+ranks the actions, explains the result, and returns a JSON receipt. It never
+performs the selected action itself.
 
-For a verified change and a policy-forbidden unverified alternative, selected receipt fields are:
+The rules are written in [MeTTa](https://metta-lang.dev/docs/learn/) and run
+locally on [MeTTa TS](https://github.com/MesTTo/MeTTa-TS). The same package can
+be called from TypeScript or installed as an Agent Skill for Claude Code,
+Codex, and OpenCode.
+
+> [!IMPORTANT]
+> Oh My Goals is a decision gate, not a sandbox or permission system. The
+> caller must invoke it before acting and must still enforce user authorization,
+> handler availability, and any operating-system security controls.
+
+## A decision in one minute
+
+Suppose a coding agent can apply a verified change or apply the same change
+before verification.
+
+| Candidate action | Required goal | Explicit rule | Evidence | Result |
+| --- | --- | --- | --- | --- |
+| Apply the verified change | Satisfied | None blocks it | 9 of 10 checks passed, with 95% coverage | Recommended |
+| Apply the unverified change | Missing | Forbidden until verification passes | No calibrated evidence | Blocked |
+
+The abridged receipt is:
 
 ```json
 {
-  "selected": "apply-verified-change",
+  "selected": "apply-verified",
   "status": "recommended",
   "selection_tied": false,
-  "automatic_execution_allowed": true
+  "automatic_execution_allowed": true,
+  "decisions": [
+    {
+      "action_id": "apply-verified",
+      "score": 0.8649,
+      "status": "recommended",
+      "norm_status": "unregulated",
+      "missing_required_goals": []
+    },
+    {
+      "action_id": "apply-unverified",
+      "score": -1,
+      "status": "blocked",
+      "norm_status": "forbidden",
+      "norm_reasons": [
+        "forbid:No passing verification result"
+      ],
+      "missing_required_goals": [
+        "safe-change"
+      ]
+    }
+  ]
 }
 ```
 
-## What it is
+The verified action wins because it satisfies the required goal and has
+attributable evidence. The other action is blocked by an explicit norm rather
+than merely receiving a lower score. The receipt preserves both outcomes so the
+choice can be reviewed later.
 
-The policy and ranking rules live in [`metta/oh-my-goals.metta`](metta/oh-my-goals.metta). MeTTa is a symbolic programming language, and [MeTTa TS 1.1.4](https://github.com/MesTTo/MeTTa-TS) runs those rules inside the TypeScript host. TypeScript validates strict JSON, encodes and decodes atoms, handles files and processes, connects the optional Prolog checks, and dispatches only caller-owned action handlers. See [ARCHITECTURE.md](ARCHITECTURE.md) for the exact runtime boundary.
+## Why use it
 
-## Why
+A model can propose an action, but the proposal does not carry your goals,
+policies, or authority. A plain allow-or-deny check also cannot answer every
+choice. You may need to compare several permitted actions, account for required
+outcomes, weigh evidence of different quality, and refuse to break a tie
+silently.
 
-An agent's preferred action is a proposal, not authority to act. oh-my-goals records the declared goals, applicable norms, evidence calibration, score, tie state, and execution eligibility before an action handler can run.
+Oh My Goals makes those inputs explicit and gives the caller one replayable
+result:
+
+- priority-aware obligations, permissions, and prohibitions;
+- weighted required and optional goals;
+- evidence with separate strength, confidence, and source;
+- ranked candidate actions with reasons and missing goals;
+- explicit tie detection and automatic-execution eligibility;
+- the complete scenario declaration needed to audit the result.
 
 ## Quickstart
 
-Node.js 20 or newer is required. The package is not yet published to npm, so run it from a source checkout:
+Node.js 20 or newer is required. The package is currently installed from a
+checkout because version 0.1.0 is not yet published to npm.
 
 ```bash
 git clone https://github.com/MesTTo/oh-my-goals.git
 cd oh-my-goals
 npm ci
 npm run build
-node dist/cli.js --help
 ```
 
-The JavaScript entry point is ESM-only. CommonJS callers must use dynamic `import()`. SWI-Prolog is optional and starts only through the explicit Prolog API or `prolog-check` command.
+Save this as `scenario.json`:
 
-To install the current checkout into another project, pack the verified source:
+```json
+{
+  "scenario": {
+    "title": "Apply a change?",
+    "goals": [
+      {
+        "id": "safe-change",
+        "owner": "maintainers",
+        "statement": "Ship only a verified change",
+        "weight": 1,
+        "kind": "collective",
+        "required": true
+      }
+    ],
+    "norms": [
+      {
+        "id": "require-verification",
+        "mode": "forbid",
+        "targetAction": "apply-unverified",
+        "reason": "No passing verification result",
+        "priority": 10
+      }
+    ],
+    "actions": [
+      {
+        "id": "apply-verified",
+        "label": "Apply the verified change",
+        "description": "Apply after the required checks pass",
+        "satisfies": ["safe-change"]
+      },
+      {
+        "id": "apply-unverified",
+        "label": "Apply the unverified change",
+        "description": "Apply before the required checks pass",
+        "satisfies": []
+      }
+    ]
+  },
+  "evidence": {
+    "apply-verified": {
+      "strength": 0.9,
+      "confidence": 0.95,
+      "source": "9 of 10 required checks passed with 95% check coverage"
+    }
+  }
+}
+```
+
+Run the decision:
+
+```bash
+node dist/cli.js decide --input scenario.json --pretty
+```
+
+The command prints the complete version of the receipt shown above. Use
+`--input -` to read JSON from stdin. Invalid input exits with code 2. Runtime
+failures exit with code 1.
+
+The [input reference](skills/oh-my-goals/references/input-schema.md) lists every
+field and default. Input is limited to 2 MiB.
+
+### Install the packed library into another project
+
+Build and verify a tarball from the checkout:
 
 ```bash
 cd /path/to/oh-my-goals
@@ -51,207 +173,295 @@ npm install /path/to/oh-my-goals/ai-tmp/oh-my-goals-0.1.0.tgz
 npx --no-install oh-my-goals --help
 ```
 
-## Highlights
+The JavaScript entry point is ESM-only. CommonJS callers must use dynamic
+`import()`.
 
-- MeTTa owns norm resolution, goal analysis, scoring, status assignment, stable ranking, tie handling, motivation consensus, and the selected PLN and SNARS formulas.
-- A recommendation is not execution authority. Ties, forbidden actions, conflicts, missing required goals, and unavailable handlers block automatic execution.
-- The same Agent Skill protocol works with Claude Code, Codex, and OpenCode. The framework does not call hosted models or read their authentication state.
-- Boundary tests cover 5,000 goals, 1,000 ranked actions, and 1,000 motivation candidates across native and large-input paths.
-- Optional SWI-Prolog checks compare only the named score and directive relations.
+## What you provide
 
-## Decide from JSON
+| Input | Meaning |
+| --- | --- |
+| Actions | The choices that are actually available. Each action declares which goals it satisfies. |
+| Goals | Outcomes an action should advance. Goals can be weighted, required, and marked as individual or collective. |
+| Norms | Explicit rules that oblige, permit, or forbid an action. Higher-priority rules defeat lower-priority conflicts. |
+| Evidence | Support for an action as a strength, a confidence value, and an attributable source. |
 
-The [complete input schema](skills/oh-my-goals/references/input-schema.md) lists every field and default. CLI input is limited to 2 MiB.
+Oh My Goals does not invent any of these values. If a policy choice would change
+the result, the caller must obtain that choice from the user or another
+authoritative source.
 
-Write a scenario with goals, norms, actions, and any grounded evidence:
+### Strength and confidence are different
 
-```json
-{
-  "scenario": {
-    "title": "Choose a change strategy",
-    "goals": [
-      {
-        "id": "preserve-behavior",
-        "owner": "maintainers",
-        "statement": "Keep the documented behavior unchanged",
-        "weight": 1,
-        "kind": "collective",
-        "required": true
-      },
-      {
-        "id": "limit-risk",
-        "owner": "operator",
-        "statement": "Limit the chance of an unsafe rollout",
-        "weight": 0.9,
-        "kind": "individual",
-        "required": true
-      }
-    ],
-    "norms": [
-      {
-        "id": "no-unverified-change",
-        "mode": "forbid",
-        "targetAction": "apply-unverified-change",
-        "reason": "The change has no passing verification result",
-        "priority": 10
-      }
-    ],
-    "actions": [
-      {
-        "id": "apply-verified-change",
-        "label": "Apply the verified change",
-        "description": "Apply the change whose focused and regression checks pass",
-        "satisfies": ["preserve-behavior", "limit-risk"]
-      },
-      {
-        "id": "apply-unverified-change",
-        "label": "Apply the unverified change",
-        "description": "Apply the change before verification",
-        "satisfies": ["preserve-behavior"]
-      }
-    ]
-  },
-  "evidence": {
-    "apply-verified-change": {
-      "strength": 0.9,
-      "confidence": 0.95,
-      "source": "caller calibration: 9 of 10 required checks passed with 95% check coverage"
-    }
-  }
-}
+`strength` measures how strongly the evidence supports the action.
+`confidence` measures the reliability or coverage of that estimate. A passing
+test supports only the behavior that test checks. It does not justify confidence
+about unrelated behavior.
+
+When evidence is omitted, the action receives a neutral strength of `0.5` with
+confidence `0`. That prior cannot produce a recommendation by itself.
+
+## How to read the receipt
+
+| Field | What it tells you |
+| --- | --- |
+| `selected` | The highest-ranked action after norms, goals, motivation, and evidence are evaluated. |
+| `status` | The selected action's status: `recommended`, `candidate`, `weak`, or `blocked`. |
+| `decisions[].score` | The exact score used for stable ranking. Blocked decisions use `-1`. |
+| `norm_status` and `norm_reasons` | Whether the action is unregulated, permitted, obligated, forbidden, or in conflict, plus the rules that caused it. |
+| `missing_required_goals` | Required outcomes the action does not satisfy. |
+| `selection_tied` and `tied_actions` | Whether more than one action shares the top score within the tie tolerance. |
+| `automatic_execution_allowed` | Whether the reasoning result is recommended and untied. It is not user authorization. |
+| `scenario_declaration` | The normalized goals, norms, actions, and notes needed to replay the decision. |
+
+Even when `automatic_execution_allowed` is true, an automatic caller should
+also confirm that the selected handler exists and that the user has already
+authorized the action.
+
+## How it works
+
+```text
+caller-owned actions + goals + norms + evidence
+                        |
+                        v
+        TypeScript validation and atom encoding
+                        |
+                        v
+             native MeTTa decision rules
+        norms -> goals -> scores -> ranking -> ties
+                        |
+                        v
+            decoded, auditable JSON receipt
+                        |
+                        v
+     caller checks authorization and handler availability
+                        |
+                        v
+              optional caller-owned execution
 ```
 
-In the example, strength comes from the observed pass ratio and confidence comes
-from the caller's measured coverage. Do not copy these values for an uncalibrated
-test result.
+The main rule module is
+[`metta/oh-my-goals.metta`](metta/oh-my-goals.metta). MeTTa owns norm
+resolution, goal analysis, scoring, status assignment, stable ranking, tie
+handling, motivation consensus, automatic-execution eligibility, and the
+selected PLN and SNARS formulas.
 
-Run the decision gate:
+TypeScript owns the runtime boundary. It validates input, encodes and decodes
+atoms, manages files and optional processes, and dispatches caller-provided
+action handlers. Large collections use bounded grounded operations for specific
+numeric and structural work, while MeTTa still makes the decision. The exact
+boundary is documented in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Use it with coding agents
+
+The package includes one [Agent Skills](https://agentskills.io/specification)
+definition for Claude Code, Codex, and OpenCode. From a built checkout, install
+the project-scoped skill layouts with:
 
 ```bash
-npx --no-install oh-my-goals decide --input scenario.json --pretty
+node dist/cli.js install-skill --agent all --scope project
 ```
 
-Use `--input -` to read JSON from stdin. Unknown fields, duplicate IDs, invalid probabilities, and dangling goal or action references are rejected with exit code 2. A valid decision writes JSON to stdout. Runtime failures use exit code 1.
+That installs the shared `.agents/skills/oh-my-goals` layout used by Codex and
+OpenCode and the `.claude/skills/oh-my-goals` layout used by Claude Code. Use
+`--agent opencode` when you specifically want
+`.opencode/skills/oh-my-goals`. Use `--scope user` for the corresponding
+directories under your home directory. Existing differing files are preserved
+unless you pass `--force`.
 
-The receipt identifies the selected action and includes the complete scenario declaration plus every ranked decision. The declaration retains goals, norms, actions, and notes so the score can be audited after a temporary input is removed. Decision scores retain full precision so threshold statuses can be replayed. `selection_tied`, `tied_actions`, and `automatic_execution_allowed` prevent an input-order tie from becoming an automatic action. The motivation audit retains the effective correlations, risks, subsystem vectors, and consensus scores. Each decision row contains its score, deontic status and reasons, satisfied goals, missing required goals, evidence projection, warnings, and provenance metadata. `forbidden` and `conflict` results are always blocked.
+A request to the installed skill can be as direct as:
 
-The motivation path computes `0.54 * normalized_motivation + 0.38 * strength * confidence`, plus `0.1` for an obligation. Motivation uses `1` and `0` subsystem membership masks for individual and collective goals. Goal weights affect coverage scoring, not the motivation consensus vectors. Consensus values use min-max normalization across the candidates. Equal values normalize to `1`. When motivation is disabled, the score is `0.42 * goal_coverage + 0.38 * strength * confidence + 0.12 * min(individual_coverage, collective_coverage)`, plus the same obligation bonus. Blocked decisions have score `-1`. Other decisions are `recommended` at score `0.72` or higher with no missing required goal, `candidate` at score `0.5` or higher, and `weak` below `0.5`.
+> Use `$oh-my-goals` to compare applying the verified change, gathering more
+> evidence, and asking me to decide. Preserve behavior is required. Applying an
+> unverified change is forbidden.
 
-Do not put credentials, tokens, private keys, or unredacted sensitive data in the input. The receipt repeats scenario text and evidence provenance on stdout.
+The skill turns the current task into structured input, runs the local CLI, and
+reads the receipt. It does not call a hosted model, read agent credentials, or
+gain permission to execute an action.
+
+<details>
+<summary>Upgrading from the former local skill name</summary>
+
+Earlier local installs used a `goalchainer` directory. The installer does not
+delete user-owned skill trees. Install `oh-my-goals`, confirm that the new skill
+is discovered, then remove the old directory if you no longer need it. The
+`goalchainer` and `goalchainer-ts` binaries remain compatibility aliases
+during this transition.
+
+</details>
 
 ## TypeScript API
 
 ```ts
+import { readFile } from "node:fs/promises";
 import {
   GoalChainer,
-  executeDecision,
   explainDecisions,
   goalChainerRunToJson,
 } from "oh-my-goals";
 
+const input = JSON.parse(await readFile("scenario.json", "utf8"));
 const chainer = new GoalChainer();
 const run = chainer.evaluate(input);
 
 console.log(goalChainerRunToJson(run));
 console.log(explainDecisions(run.decisions).join("\n"));
 
-if (run.automaticExecutionAllowed && actionIsAvailable && userAlreadyAuthorizedIt) {
-  await executeDecision(run.selected, context, {
-    "apply-verified-change": async (value) => applyChange(value),
-  });
+if (!run.automaticExecutionAllowed) {
+  process.exitCode = 2;
 }
 ```
 
-`GoalChainer` validates unknown input at the boundary. `evaluateScenario` accepts a validated scenario and a custom evidence reasoner. `StaticEvidenceReasoner` reads explicit evidence and action defaults. `PlnEvidenceReasoner` projects beliefs from the package's selected native PLN deduction and revision relations. `ContextualQueryEvidenceReasoner` passes each action's `evidenceQuery` and `evidenceAtoms` to a caller-injected synchronous adapter. Nonempty `evidenceAtoms` require a nonempty `evidenceQuery`. The `decide` CLI and `runGoalChainer` use static evidence and reject nonempty contextual declarations instead of ignoring them.
+`GoalChainer` rejects unknown fields, duplicate IDs, invalid probabilities,
+and dangling goal or action references. `executeDecision` refuses blocked
+decisions and requires a matching caller-owned handler.
 
-Omitted evidence uses a neutral strength of `0.5` with confidence `0`. It cannot
-produce a recommendation by itself. `executeDecision` enforces the blocked-action
-boundary. Automatic callers should require `automaticExecutionAllowed`; a top-score
-tie leaves it false even when each tied action is individually `recommended`.
-Scores within `1e-12` are treated as tied so binary64 rounding cannot authorize an
-arbitrary winner.
+After the caller separately confirms user authorization and handler
+availability, it can call `executeDecision(run.selected, context, handlers)`.
+That call does not infer or grant authorization.
 
-The lower-level API also exports:
+The CLI and `runGoalChainer` use static evidence. Applications that need
+queries against another reasoner can call `evaluateScenario` with a custom
+`EvidenceReasoner`. `ContextualQueryEvidenceReasoner` passes each action's
+`evidenceQuery` and `evidenceAtoms` to a caller-injected synchronous adapter.
 
-- `resolveNorms` and `resolveNormsBatch` for priority-aware deontic resolution.
-- `scoreActions` and `decideActions` for the native MeTTa score and status rules.
-- `gradeBeliefs` for PLN deduction and count-space revision.
-- `consensusDecision` for individual and collective goal reconciliation with caller-supplied correlations and risks.
-- `assess` and `derive` for SNARS subjective-logic receipts.
-- `createDirectivePlan` and `DirectiveLifecycle` for ordered task status, assignment, and instance-local atomic claims.
-- `makeProposition` and `buildHyperbasePacket` for structured propositions and Semantic-Hypergraph facts.
-- `loadColoreContext` for a caller-supplied COLORE adapter source and caller-declared projection specifications. No ontology data or preset projections are bundled.
-- `decideActionsWithProlog`, `verifyScorePrologParity`, and `checkDirectivePrologParity` for explicit optional SWI-Prolog evaluation and comparison.
-- `redactRecord`, `detectLeaks`, and `executeDecision` for caller-owned execution boundaries.
+## Decision behavior
 
-`loadColoreContext` reads a strict line-oriented adapter format, not arbitrary CLIF.
-Each noncomment line must use one of these forms:
+### Norms
 
-```metta
-(colore module MODULE "SOURCE")
-(colore pred MODULE PREDICATE ARITY)
-(colore axiom MODULE AXIOM_ID KIND EXPRESSION)
-(colore gloss MODULE AXIOM_ID "TEXT")
+Norm modes are `oblige`, `permit`, and `forbid`. The highest-priority
+applicable norms decide the effective status. Opposing top-priority norms
+produce `conflict` instead of an arbitrary winner. Forbidden and conflicting
+actions are blocked.
+
+### Goals
+
+Goal weights determine coverage. A required goal can prevent an otherwise
+high-scoring action from becoming `recommended`. Individual and collective
+goal membership also feeds the optional motivation consensus path.
+
+### Statuses and ties
+
+| Status | Meaning |
+| --- | --- |
+| `recommended` | Score is at least `0.72`, the action is not blocked, and no required goal is missing. |
+| `candidate` | Score is at least `0.5`, but the recommendation conditions are not all met. |
+| `weak` | Score is below `0.5` and the action is not blocked. |
+| `blocked` | A prohibition or unresolved norm conflict prevents selection for execution. |
+
+Scores within `1e-12` are treated as tied. The declaration order remains
+stable, but `automatic_execution_allowed` is false so input order cannot
+silently authorize one of the tied actions.
+
+<details>
+<summary>Exact default scoring model</summary>
+
+With motivation enabled, the score is:
+
+```text
+0.54 * normalized_motivation
++ 0.38 * strength * confidence
++ 0.10 when the action is obligated
 ```
 
-An unsupported record raises a syntax error with its line number. Convert a source
-ontology into these records before loading it.
+Motivation uses individual and collective goal membership masks plus
+caller-supplied correlations and risks. Goal weights affect coverage, while
+membership feeds motivation. Consensus values are min-max normalized. Equal
+values normalize to `1`.
 
-## Coding-agent integration
+With motivation disabled, the score is:
 
-The package ships one [Agent Skills](https://agentskills.io/specification) definition for Claude Code, Codex, and OpenCode. The installer copies the same canonical skill into each tool's supported location.
+```text
+0.42 * goal_coverage
++ 0.38 * strength * confidence
++ 0.12 * min(individual_coverage, collective_coverage)
++ 0.10 when the action is obligated
+```
+
+Blocked decisions use score `-1`.
+
+</details>
+
+## Library surfaces
+
+| Area | Public entry points |
+| --- | --- |
+| Complete decision gate | `GoalChainer`, `runGoalChainer`, `evaluateScenario` |
+| Norm resolution | `resolveNorms`, `resolveNormsBatch` |
+| Scoring and ranking | `scoreActions`, `decideActions` |
+| Evidence and PLN | `StaticEvidenceReasoner`, `PlnEvidenceReasoner`, `ContextualQueryEvidenceReasoner`, `gradeBeliefs` |
+| Motivation | `consensusDecision` |
+| SNARS opinions | `assess`, `derive` |
+| Task directives | `createDirectivePlan`, `DirectiveLifecycle` |
+| Structured propositions | `makeProposition`, `buildHyperbasePacket` |
+| Optional Prolog comparison | `decideActionsWithProlog`, `verifyScorePrologParity`, `checkDirectivePrologParity` |
+| Caller safety helpers | `redactRecord`, `detectLeaks`, `executeDecision` |
+
+## MeTTa and optional interop
+
+The framework pins the MeTTa TS runtime packages to version 1.1.4. The native
+paths use standard-library operations such as `foldl-atom`, `map-atom`,
+`filter-atom`, `msort`, and `is-member`. Bounded host operations cover
+large compensated vector math, structural trees, stable ranking, and indexed PLN
+matching. They do not compare candidate scores or select a winner outside
+MeTTa.
+
+SWI-Prolog is optional. The named score and directive relations can be compared
+with their MeTTa counterparts:
 
 ```bash
-npx --no-install oh-my-goals install-skill --agent codex --scope project
-npx --no-install oh-my-goals install-skill --agent claude --scope project
-npx --no-install oh-my-goals install-skill --agent opencode --scope project
+node dist/cli.js prolog-check --pretty
 ```
 
-Use `--agent all` to install the shared `.agents/skills` layout used by Codex and OpenCode plus the `.claude/skills` layout used by Claude Code. Use `--agent opencode` when you specifically want `.opencode/skills` instead. User installs target the corresponding directories under your home directory. Existing differing files or modes are never replaced unless you pass `--force`.
+The command starts the local `swipl` executable and exits nonzero if a checked
+relation differs. It does not claim Prolog parity for every MeTTa relation.
 
-OpenCode also scans `.claude/skills`. In a project installed with `--agent all`,
-OpenCode may log a duplicate-name warning for the two identical copies. Install
-only the target you use when you want one discovery entry.
+ProbMeTTa is not ported or bundled. A separately managed PeTTa and ProbMeTTa
+process can be connected through an `EvidenceReasoner` or
+`ContextualQueryEvidenceReasoner`, returning strength, confidence, source, and
+proof data to this decision gate.
 
-Earlier local skill installs used a `goalchainer` directory. The installer does not delete user-owned skill trees. Install `oh-my-goals`, check that the new skill is discovered, then remove the old directory if you no longer need it. The `goalchainer` and `goalchainer-ts` binaries remain compatibility aliases during this transition.
+## Scope and limits
 
-The skill tells the coding agent to derive structured input from the current task, keep goals, norms, and evidence calibration attributable to the user or repository, call the JSON CLI, and stop unless automatic execution is allowed. oh-my-goals does not call a hosted model or read the agent's authentication state.
+- Oh My Goals does not discover available actions or invent goals, norms, or
+  evidence.
+- It does not intercept shell commands, isolate processes, filter prompts, or
+  replace operating-system permissions.
+- It does not call Claude Code, Codex, OpenCode, or another hosted model. Agent
+  authentication remains with the caller.
+- It contains no built-in scenario data or action handlers.
+- The JSON CLI accepts static evidence. Contextual evidence requires an injected
+  TypeScript reasoner.
+- Its PLN, SNARS, deontic, motivation, and directive exports are the documented
+  decision relations, not complete replacements for a theorem prover, planner,
+  probabilistic logic runtime, or NARS system.
 
-## MeTTa and Prolog
+Do not put credentials, private keys, tokens, or unredacted sensitive text in
+the input. The receipt repeats the scenario and evidence provenance.
 
-The framework pins `@metta-ts/core`, `@metta-ts/edsl`, `@metta-ts/hyperon`, `@metta-ts/prolog`, and the `@metta-ts/node` development CLI to 1.1.4. The packaged [`oh-my-goals.metta`](metta/oh-my-goals.metta) module declares the policy and reasoning rules. Its native paths use the MeTTa TS stdlib operations `foldl-atom`, `map-atom`, `filter-atom`, `msort`, and `is-member`. The TypeScript host registers low-level operations for large compensated vector sums and dot products, normalization, mask and correlation mapping, candidate validation, structural tree construction, Python-compatible rounding, indexed PLN matching, and stack-safe evaluator batching.
+## Status and verification
 
-MeTTa derives coverage from goal aggregates, derives every decision row, computes every motivation score and strict maximum, selects the consensus, and computes PLN deductions and revision. Grounded large-input paths mirror satisfied-goal membership and partitioning, mask and correlation mapping, stable descending-score ranking and epsilon ties, and PLN matching by action and predicate. MeTTa still decides automatic-execution eligibility. A raw-shape router returns a deferred native relation for bounded scalar-only motivation inputs and sends large, reducible, or malformed inputs to the motivation bridge. The bridge validates `[0,1]` membership masks, candidate dimensions, correlations, risks, and identities. Reducible scalar and identity terms must have exactly one normal form. A grounded kernel computes the two compensated dot products and builds a balanced pull tree. `gc-motivation-consensus-canonical` subtracts risk, applies the disagreement penalty, merges all five strict maxima, preserves declaration-order ties, and selects the consensus in MeTTa. The router and bridge do not compare scores or select winners.
+Oh My Goals is at version 0.1.0 and is not yet published to npm.
 
-SWI-Prolog remains an optional interoperability path. The package imports the relations in `assets/gc_score.pl` and `assets/gc_directive.pl` through `@metta-ts/prolog`, then compares them with the corresponding MeTTa score, decision-status, and directive-state relations:
+`npm run verify` checks the native MeTTa module, TypeScript API, CLI, packed
+tarball, optional named Prolog comparisons when SWI-Prolog is available, and the
+Agent Skill. Package smoke tests install the tarball into an isolated consumer
+and execute the packaged MeTTa source.
 
-```bash
-npx --no-install oh-my-goals prolog-check --pretty
-```
-
-The command starts the local `swipl` executable, runs both checks, disposes the bridge, and exits nonzero if a relation differs. It checks only those named relations. Prolog is not the framework's primary evaluator and the command does not claim parity for every MeTTa relation.
-
-ProbMeTTa is not ported or bundled. It targets PeTTa, which compiles MeTTa programs to SWI-Prolog. A caller can connect a separately managed PeTTa and ProbMeTTa process through `EvidenceReasoner` or `ContextualQueryEvidenceReasoner`, then return the resulting strength, confidence, source, and proof data. That adapter is optional and remains outside the native MeTTa TS rule module.
-
-The framework ports the reusable relations exposed by this package. Its PLN code implements the selected deduction and count-space revision formulas. Its SNARS code implements opinion construction and two-premise deduction. The deontic and motivation modules implement the static policy and consensus slices used by the decision gate. These exports are not replacements for complete chaining, deontic logic, probabilistic logic, or NARS systems.
-
-## Status
-
-oh-my-goals is at version 0.1.0 and is not yet published to npm. `npm run verify` checks the MeTTa module, TypeScript API, CLI, packed tarball, and Agent Skill. The test suite runs the named Prolog parity checks when SWI-Prolog is installed.
-
-The package implements the documented decision relations. It is not a general theorem prover, a complete planner, a probabilistic logic runtime, or a full NARS implementation.
+Boundary tests cover 5,000 goals, 1,000 ranked actions, 1,000 motivation
+candidates, large PLN rule sets, malformed inputs, non-finite values, and stable
+tie behavior.
 
 ## Development
 
 ```bash
 npm ci
-npx metta-ts --check metta/oh-my-goals.metta
+npm run check:metta
 npm test
 npm run build
 npm run test:package
 ```
 
-`npm run test:package` cleans the build output, packs the npm tarball from copied live sources, installs it into an isolated consumer, and checks the public API, CLI, MeTTa module, Prolog assets, and Agent Skill.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for rule ownership, large-input
+boundaries, evaluator isolation, optional interop, and verification scope.
 
 ## License
 
