@@ -1,7 +1,11 @@
 // Evidence projections used by the generic decision engine.
 
-import { add, mul, sub } from "@metta-ts/edsl";
-import { mettaDB, num, type MettaDB } from "./engine.js";
+import {
+  mettaFloat,
+  mettaOne,
+  sharedGoalChainerMetta,
+  type GoalChainerMetta,
+} from "./metta.js";
 import {
   createCandidateAction,
   createEvidenceProjection,
@@ -31,12 +35,21 @@ const DEONTIC_STATUSES: ReadonlySet<string> = new Set([
 
 export type EvidenceByAction = Readonly<Record<string, EvidenceProjectionInput>>;
 
-function expectation(db: MettaDB, strength: number, confidence: number): number {
-  return num(db, add(mul(confidence, sub(strength, 0.5)), 0.5));
+function expectation(db: GoalChainerMetta, strength: number, confidence: number): number {
+  const value = mettaOne(
+    db,
+    "gc-evidence-expectation",
+    mettaFloat(strength),
+    mettaFloat(confidence),
+  );
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error("goalchainer.metta returned an invalid evidence expectation");
+  }
+  return value;
 }
 
 function projection(
-  db: MettaDB,
+  db: GoalChainerMetta,
   action: CandidateAction,
   input: EvidenceProjectionInput | undefined,
   defaultSource: string,
@@ -85,7 +98,7 @@ function projection(
  * default truth value. */
 export class StaticEvidenceReasoner implements EvidenceReasoner {
   readonly source: string;
-  private readonly db = mettaDB();
+  private readonly db = sharedGoalChainerMetta();
   private readonly evidence: EvidenceByAction;
 
   constructor(
@@ -145,7 +158,7 @@ export class StaticEvidenceReasoner implements EvidenceReasoner {
 /** Project beliefs produced by the generic PLN engine. */
 export class PlnEvidenceReasoner implements EvidenceReasoner {
   readonly source = "PLN on @metta-ts";
-  private readonly db = mettaDB();
+  private readonly db = sharedGoalChainerMetta();
   private readonly beliefs: Readonly<Record<string, Readonly<Belief>>>;
 
   constructor(beliefs: Readonly<Record<string, Belief>>) {
@@ -307,7 +320,7 @@ export class ContextualQueryEvidenceReasoner implements EvidenceReasoner {
     }
     const source = result.source ?? this.source;
     return projection(
-      mettaDB(),
+      sharedGoalChainerMetta(),
       stableAction,
       {
         strength: truthValue[0],

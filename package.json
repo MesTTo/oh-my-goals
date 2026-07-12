@@ -1,11 +1,11 @@
 {
   "name": "goalchainer-ts",
   "version": "0.1.0",
-  "description": "Goal-aware TypeScript decision framework on MeTTa-TS with deontic norms, graded evidence, task directives, and Agent Skill integration.",
+  "description": "Native MeTTa decision framework with a TypeScript host, deontic norms, graded evidence, task directives, and Agent Skill integration.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "license": "SEE LICENSE IN THIRD_PARTY_NOTICES.md",
+  "license": "MIT",
   "author": "MesTTo",
   "repository": {
     "type": "git",
@@ -30,30 +30,35 @@
   },
   "files": [
     "dist",
-    "assets/*",
+    "metta/goalchainer.metta",
+    "assets/gc_directive.pl",
+    "assets/gc_score.pl",
     "skills/goalchainer",
-    "THIRD_PARTY_NOTICES.md"
+    "ARCHITECTURE.md",
+    "LICENSE"
   ],
   "scripts": {
     "clean": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc -p tsconfig.json",
     "postbuild": "node --eval \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
+    "check:metta": "metta-ts --check --undefined-symbols metta/goalchainer.metta",
     "cli": "tsx src/cli.ts",
     "test": "vitest run",
     "test:package": "node tests/package-smoke.mjs",
-    "verify": "npm test && npm run build && npm run test:package",
+    "verify": "npm run check:metta && npm test && npm run build && npm run test:package",
     "prepack": "npm run build",
     "prepublishOnly": "npm run verify",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@metta-ts/core": "1.1.3",
-    "@metta-ts/edsl": "1.1.3",
-    "@metta-ts/hyperon": "1.1.3",
-    "@metta-ts/prolog": "1.1.3",
+    "@metta-ts/core": "1.1.4",
+    "@metta-ts/edsl": "1.1.4",
+    "@metta-ts/hyperon": "1.1.4",
+    "@metta-ts/prolog": "1.1.4",
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@metta-ts/node": "1.1.4",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",

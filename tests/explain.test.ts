@@ -4,6 +4,7 @@ import { explainDecisions } from "../src/explain.js";
 import {
   createDecision,
   createEvidenceProjection,
+  SCORE_EQUIVALENCE_EPSILON,
   type Decision,
 } from "../src/models.js";
 
@@ -36,6 +37,18 @@ function decision(overrides: Partial<Decision>): Decision {
     warnings: overrides.warnings,
     metadata: overrides.metadata,
   });
+}
+
+function topPair(secondScore: number): Decision[] {
+  return [
+    decision({ actionId: "first", label: "First", status: "recommended", score: 0.8 }),
+    decision({
+      actionId: "second",
+      label: "Second",
+      status: "recommended",
+      score: secondScore,
+    }),
+  ];
 }
 
 describe("plain-language decision explanations", () => {
@@ -129,14 +142,27 @@ describe("plain-language decision explanations", () => {
   });
 
   it("labels exact top-score ties without asserting an arbitrary winner", () => {
-    const lines = explainDecisions([
-      decision({ actionId: "first", label: "First", status: "recommended", score: 0.8 }),
-      decision({ actionId: "second", label: "Second", status: "recommended", score: 0.8 }),
-    ]);
+    const lines = explainDecisions(topPair(0.8));
 
     expect(lines).toContain("Tied for top: First (score 0.800).");
     expect(lines).toContain("Tied for top: Second (score 0.800).");
     expect(lines.join("\n")).not.toContain("Selected:");
+  });
+
+  it("uses the native ranking epsilon for near ties", () => {
+    const lines = explainDecisions([
+      ...topPair(0.8 - SCORE_EQUIVALENCE_EPSILON / 2),
+      decision({
+        actionId: "third",
+        label: "Third",
+        status: "recommended",
+        score: 0.8 - SCORE_EQUIVALENCE_EPSILON * 2,
+      }),
+    ]);
+
+    expect(lines).toContain("Tied for top: First (score 0.800).");
+    expect(lines).toContain("Tied for top: Second (score 0.800).");
+    expect(lines).toContain("Not selected: Third (score 0.800).");
   });
 
   it("rejects sparse or forged decision rankings", () => {

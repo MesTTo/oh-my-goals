@@ -5,17 +5,30 @@ import { pathToFileURL } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { loadColoreContext } from "../src/ontology.js";
+import {
+  loadColoreContext,
+  type ProjectionSpec,
+} from "../src/ontology.js";
 
 const FIXTURE = [
   "; focused COLORE fixture",
-  '(colore module timepoints/lp_ordering "https://example.test/time")',
-  "(colore pred timepoints/lp_ordering before 2)",
-  "(colore axiom timepoints/lp_ordering a1 horn (forall ($x $y $z) (if (and (timepoint $x) (timepoint $y) (timepoint $z) (before $x $y) (before $y $z)) (before $x $z))))",
-  '(colore gloss timepoints/lp_ordering a1 "before is transitive")',
+  '(colore module caller/relations "https://example.test/relations")',
+  "(colore pred caller/relations relates 2)",
+  "(colore axiom caller/relations r1 horn (forall ($x $y) (if (relates $x $y) (connected $x $y))))",
+  '(colore gloss caller/relations r1 "related values are connected")',
   '(colore module unrelated "https://example.test/unrelated")',
   "(colore axiom unrelated u1 theorem (unrelated x))",
 ].join("\n");
+
+const PROJECTION: ProjectionSpec = {
+  id: "caller-relation-projection",
+  module: "caller/relations",
+  axiomId: "r1",
+  expectedKind: "horn",
+  expectedExpression: "(forall ($x $y) (if (relates $x $y) (connected $x $y)))",
+  from: ["relates(x, y)"],
+  to: "connected(x, y)",
+};
 
 describe("COLORE source selection", () => {
   let root: string;
@@ -51,17 +64,34 @@ describe("COLORE source selection", () => {
       gloss_count: 1,
       axiom_kinds: { horn: 1, theorem: 1 },
     });
+    expect(context.selected_axioms).toEqual([]);
+    expect(context.projection_rules).toEqual([]);
+  });
+
+  it("checks caller-supplied projections against the named source axiom", () => {
+    const context = loadColoreContext(fixturePath, [PROJECTION]);
+
     expect(context.selected_axioms).toEqual([
       {
-        source: "timepoints/lp_ordering/a1",
-        module: "timepoints/lp_ordering",
-        axiom_id: "a1",
+        source: "caller/relations/r1",
+        module: "caller/relations",
+        axiom_id: "r1",
         kind: "horn",
-        expression: "(forall ($x $y $z) (if (and (timepoint $x) (timepoint $y) (timepoint $z) (before $x $y) (before $y $z)) (before $x $z)))",
-        gloss: "before is transitive",
+        expression: "(forall ($x $y) (if (relates $x $y) (connected $x $y)))",
+        gloss: "related values are connected",
       },
     ]);
-    expect(context.projection_rules.map((rule) => rule.available)).toEqual([true, false, false]);
+    expect(context.projection_rules).toEqual([
+      {
+        id: "caller-relation-projection",
+        source: "caller/relations/r1",
+        available: true,
+        kind: "horn",
+        from: ["relates(x, y)"],
+        to: "connected(x, y)",
+        gloss: "related values are connected",
+      },
+    ]);
   });
 
   it("accepts file URLs and reports the resolved filesystem path", () => {
@@ -70,20 +100,17 @@ describe("COLORE source selection", () => {
     expect(context.source_path).toBe(fixturePath);
   });
 
-  it("does not enable a hard-coded projection for a spoofed axiom key", () => {
-    writeFileSync(
-      fixturePath,
-      FIXTURE.replace(
-        "a1 horn (forall ($x $y $z) (if (and (timepoint $x) (timepoint $y) (timepoint $z) (before $x $y) (before $y $z)) (before $x $z)))",
-        "a1 unrelated (not (before x z))",
-      ),
-      "utf-8",
-    );
-
-    expect(loadColoreContext(fixturePath).projection_rules[0]!.available).toBe(false);
+  it("requires the caller's expected kind and expression to match exactly", () => {
+    expect(loadColoreContext(fixturePath, [
+      { ...PROJECTION, expectedKind: "definition" },
+      { ...PROJECTION, id: "different-expression", expectedExpression: "(connected x y)" },
+    ]).projection_rules.map((rule) => rule.available)).toEqual([false, false]);
   });
 
   it("uses the environment source while letting an explicit source take precedence", () => {
+    expect(() => loadColoreContext()).toThrow(
+      "COLORE source is required when GOALCHAINER_COLORE_PATH is not set",
+    );
     process.env.GOALCHAINER_COLORE_PATH = fixturePath;
     expect(loadColoreContext().source_path).toBe(fixturePath);
 
@@ -95,7 +122,7 @@ describe("COLORE source selection", () => {
 
   it("returns the source-compatible empty context for a missing file", () => {
     const missing = join(root, "missing.metta");
-    expect(loadColoreContext(missing)).toEqual({
+    expect(loadColoreContext(missing, [PROJECTION])).toEqual({
       source_path: missing,
       source_available: false,
       module_count: 0,
@@ -106,51 +133,52 @@ describe("COLORE source selection", () => {
       selected_axioms: [],
       projection_rules: [
         {
-          id: "time-before-transitivity",
-          source: "timepoints/lp_ordering/a1",
+          id: "caller-relation-projection",
+          source: "caller/relations/r1",
           available: false,
           kind: null,
-          from: [
-            "timepoint(x)",
-            "timepoint(y)",
-            "timepoint(z)",
-            "before(x, y)",
-            "before(y, z)",
-          ],
-          to: "before(x, z)",
-          gloss: "",
-        },
-        {
-          id: "relation-composition-grandchild",
-          source: "kinship/definitions/hasGrandchild/HGC-1",
-          available: false,
-          kind: null,
-          from: [
-            "hasChild(x, y)",
-            "hasChild(y, z)",
-            "x != y",
-            "y != z",
-            "x != z",
-          ],
-          to: "hasGrandchild(x, z)",
-          gloss: "",
-        },
-        {
-          id: "relation-composition-sibling",
-          source: "kinship/definitions/hasSibling/HS-1",
-          available: false,
-          kind: null,
-          from: ["hasChild(z, x)", "hasChild(z, y)", "x != y"],
-          to: "hasSibling(x, y)",
+          from: ["relates(x, y)"],
+          to: "connected(x, y)",
           gloss: "",
         },
       ],
     });
   });
 
+  it("rejects malformed or ambiguous projection declarations", () => {
+    expect(() => loadColoreContext(fixturePath, [
+      PROJECTION,
+      { ...PROJECTION },
+    ])).toThrow("duplicate projection spec ID");
+    expect(() => loadColoreContext(fixturePath, [
+      { ...PROJECTION, expectedExpression: "" },
+    ])).toThrow("expectedExpression must be a nonblank string");
+    expect(() => loadColoreContext(fixturePath, [
+      { ...PROJECTION, extra: true } as any,
+    ])).toThrow("contains unknown fields: extra");
+    const sparse = [PROJECTION] as ProjectionSpec[];
+    sparse.length = 2;
+    expect(() => loadColoreContext(fixturePath, sparse)).toThrow(
+      "projection specs must not contain holes",
+    );
+  });
+
   it("rejects non-file URLs because loading is synchronous", () => {
     expect(() => loadColoreContext(new URL("https://example.test/data-colore.metta"))).toThrowError(
       "COLORE source URL must use file: protocol: https:",
+    );
+    expect(() => loadColoreContext("" as any)).toThrow(
+      "COLORE source path must be nonblank",
+    );
+    expect(() => loadColoreContext(4 as any)).toThrow(
+      "COLORE source must be a filesystem path or file URL",
+    );
+  });
+
+  it("rejects ontology text outside the documented adapter grammar", () => {
+    writeFileSync(fixturePath, "(cl-text arbitrary-clif)", "utf-8");
+    expect(() => loadColoreContext(fixturePath)).toThrow(
+      "unsupported COLORE adapter record at line 1",
     );
   });
 });

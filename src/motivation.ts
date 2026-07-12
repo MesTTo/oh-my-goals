@@ -1,35 +1,42 @@
-// Reconcile individual and collective goal preferences on @metta-ts.
+// Reconcile individual and collective goal preferences in goalchainer.metta.
 
-import { add, div, mul, sub, type Term } from "@metta-ts/edsl";
-import { flt, mabs, mettaDB, num, type MettaDB } from "./engine.js";
-import { createGoalScenario, roundN, type GoalScenario } from "./models.js";
+import { isDeepStrictEqual } from "node:util";
+
+import {
+  mettaCall,
+  mettaFloat,
+  mettaOne,
+  mettaString,
+  mettaSymbol,
+  mettaTuple,
+  sharedGoalChainerMetta,
+  type Term,
+} from "./metta.js";
+import { createGoalScenario, type GoalScenario } from "./models.js";
 import { assertDenseArray, assertKnownKeys, assertPlainRecord, ownValue } from "./records.js";
 
-export const MOTIVATION_ENGINE = "goal consensus on @metta-ts";
+export const MOTIVATION_ENGINE = "GoalChainer motivation in MeTTa TS";
 
 export interface MotivationOptions {
   /** Per-action, per-goal correlations in [-1, 1]. Declared goal coverage is
    * used when a correlation is omitted. */
   correlations?: Readonly<Record<string, Readonly<Record<string, number>>>>;
-  /** Per-action risk in [0, 1]. The default is one minus evidence strength. */
+  /** Per-action risk in [0, 1]. The default is one minus evidence strength,
+   * rounded to three decimal places by goalchainer.metta. */
   risks?: Readonly<Record<string, number>>;
 }
 
 interface Candidate {
-  id: string;
-  corr: number[];
-  risk: number;
+  readonly id: string;
+  readonly corr: readonly number[];
+  readonly risk: number;
 }
 
 export interface MotivationResult {
   readonly engine: string;
   readonly individual_goals: readonly number[];
   readonly collective_goals: readonly number[];
-  readonly candidates: readonly {
-    readonly id: string;
-    readonly corr: readonly number[];
-    readonly risk: number;
-  }[];
+  readonly candidates: readonly Candidate[];
   readonly goal_pull: Readonly<{ individual: string | null; collective: string | null }>;
   readonly subsystem_preference: Readonly<{
     individual: string | null;
@@ -38,6 +45,8 @@ export interface MotivationResult {
   readonly consensus_scores: Readonly<Record<string, number>>;
   readonly consensus: string;
 }
+
+const VALID_RESULTS = new WeakSet<object>();
 
 function finiteVector(
   input: readonly number[],
@@ -83,42 +92,7 @@ function preferenceRecord(
   return Object.freeze({ individual: input.individual, collective: input.collective });
 }
 
-function finiteDot(weights: readonly number[], correlations: readonly number[]): number {
-  let level = weights.map((weight, index) => weight * correlations[index]!);
-  if (level.length === 0) return 0;
-  while (level.length > 1) {
-    const next: number[] = [];
-    for (let index = 0; index < level.length; index += 2) {
-      next.push(level[index]! + (level[index + 1] ?? 0));
-    }
-    level = next;
-  }
-  const result = level[0]!;
-  if (!Number.isFinite(result)) {
-    throw new RangeError("motivation dot product must be finite");
-  }
-  return result;
-}
-
-function expectedBest(
-  weights: readonly number[],
-  candidates: MotivationResult["candidates"],
-  withRisk: boolean,
-): string {
-  let best = candidates[0]!;
-  let bestScore = finiteDot(weights, best.corr) - (withRisk ? best.risk : 0);
-  for (const candidate of candidates.slice(1)) {
-    const score = finiteDot(weights, candidate.corr) - (withRisk ? candidate.risk : 0);
-    if (score > bestScore) {
-      best = candidate;
-      bestScore = score;
-    }
-  }
-  return best.id;
-}
-
-/** Validate and deeply freeze a motivation result before it enters a receipt. */
-export function createMotivationResult(input: MotivationResult): MotivationResult {
+function snapshotMotivationResult(input: MotivationResult): MotivationResult {
   assertPlainRecord(input, "motivation result");
   assertKnownKeys(input, "motivation result", [
     "engine",
@@ -130,11 +104,11 @@ export function createMotivationResult(input: MotivationResult): MotivationResul
     "consensus_scores",
     "consensus",
   ]);
-  if (typeof input.engine !== "string" || input.engine.trim() === "") {
-    throw new TypeError("motivation result engine must be a nonblank string");
+  if (input.engine !== MOTIVATION_ENGINE) {
+    throw new RangeError(`motivation result engine must be ${MOTIVATION_ENGINE}`);
   }
-  const individual = finiteVector(input.individual_goals, "individual goal vector", [0, Infinity]);
-  const collective = finiteVector(input.collective_goals, "collective goal vector", [0, Infinity]);
+  const individual = finiteVector(input.individual_goals, "individual goal vector", [0, 1]);
+  const collective = finiteVector(input.collective_goals, "collective goal vector", [0, 1]);
   if (individual.length !== collective.length) {
     throw new RangeError("motivation goal vectors must have equal length");
   }
@@ -162,27 +136,16 @@ export function createMotivationResult(input: MotivationResult): MotivationResul
     if (corr.length !== individual.length) {
       throw new RangeError(`motivation candidates[${index}].corr has the wrong goal count`);
     }
-    if (typeof candidate.risk !== "number" || !Number.isFinite(candidate.risk) || candidate.risk < 0 || candidate.risk > 1) {
+    if (
+      typeof candidate.risk !== "number" ||
+      !Number.isFinite(candidate.risk) ||
+      candidate.risk < 0 ||
+      candidate.risk > 1
+    ) {
       throw new RangeError(`motivation candidates[${index}].risk must be within [0, 1]`);
     }
     return Object.freeze({ id: candidate.id, corr, risk: candidate.risk });
   }));
-  assertPlainRecord(input.consensus_scores, "motivation consensus scores");
-  const scoreIds = Object.keys(input.consensus_scores);
-  const unknownScoreIds = scoreIds.filter((id) => !candidateIds.has(id));
-  const missingScoreIds = [...candidateIds].filter((id) => !Object.hasOwn(input.consensus_scores, id));
-  if (unknownScoreIds.length > 0 || missingScoreIds.length > 0) {
-    throw new RangeError(
-      `motivation consensus score IDs do not match candidates; unknown=${unknownScoreIds.join(",")}; missing=${missingScoreIds.join(",")}`,
-    );
-  }
-  const providedConsensusScores = Object.freeze(Object.fromEntries(scoreIds.map((id) => {
-    const score = input.consensus_scores[id];
-    if (typeof score !== "number" || !Number.isFinite(score)) {
-      throw new RangeError(`motivation consensus score for ${id} must be finite`);
-    }
-    return [id, score];
-  })));
   const individualAvailable = individual.some((weight) => weight > 0);
   const collectiveAvailable = collective.some((weight) => weight > 0);
   if (!individualAvailable && !collectiveAvailable) {
@@ -202,50 +165,26 @@ export function createMotivationResult(input: MotivationResult): MotivationResul
     individualAvailable,
     collectiveAvailable,
   );
-  const expectedGoalPull = {
-    individual: individualAvailable ? expectedBest(individual, candidates, false) : null,
-    collective: collectiveAvailable ? expectedBest(collective, candidates, false) : null,
-  };
-  const expectedSubsystemPreference = {
-    individual: individualAvailable ? expectedBest(individual, candidates, true) : null,
-    collective: collectiveAvailable ? expectedBest(collective, candidates, true) : null,
-  };
-  if (
-    goalPull.individual !== expectedGoalPull.individual ||
-    goalPull.collective !== expectedGoalPull.collective
-  ) {
-    throw new RangeError("motivation goal pull is inconsistent with candidates and goals");
+  assertPlainRecord(input.consensus_scores, "motivation consensus scores");
+  const scoreIds = Object.keys(input.consensus_scores);
+  const unknownScoreIds = scoreIds.filter((id) => !candidateIds.has(id));
+  const missingScoreIds = [...candidateIds].filter(
+    (id) => !Object.hasOwn(input.consensus_scores, id),
+  );
+  if (unknownScoreIds.length > 0 || missingScoreIds.length > 0) {
+    throw new RangeError(
+      `motivation consensus score IDs do not match candidates; unknown=${unknownScoreIds.join(",")}; missing=${missingScoreIds.join(",")}`,
+    );
   }
-  if (
-    subsystemPreference.individual !== expectedSubsystemPreference.individual ||
-    subsystemPreference.collective !== expectedSubsystemPreference.collective
-  ) {
-    throw new RangeError("motivation subsystem preference is inconsistent with candidates and goals");
-  }
-  const expectedScoreEntries: Array<readonly [string, number]> = [];
-  for (const candidate of candidates) {
-    const individualScore = finiteDot(individual, candidate.corr) - candidate.risk;
-    const collectiveScore = finiteDot(collective, candidate.corr) - candidate.risk;
-    const expectedScore = individualAvailable && collectiveAvailable
-      ? (individualScore + collectiveScore) / 2 -
-        0.25 * Math.abs(individualScore - collectiveScore)
-      : individualAvailable
-        ? individualScore
-        : collectiveScore;
-    if (Math.abs(providedConsensusScores[candidate.id]! - expectedScore) > 1e-12) {
-      throw new RangeError(`motivation consensus score is inconsistent for ${candidate.id}`);
+  const consensusScores = Object.freeze(Object.fromEntries(scoreIds.map((id) => {
+    const score = input.consensus_scores[id];
+    if (typeof score !== "number" || !Number.isFinite(score)) {
+      throw new RangeError(`motivation consensus score for ${id} must be finite`);
     }
-    expectedScoreEntries.push([candidate.id, expectedScore]);
-  }
-  const consensusScores = Object.freeze(Object.fromEntries(expectedScoreEntries));
+    return [id, score];
+  })));
   if (typeof input.consensus !== "string" || !candidateIds.has(input.consensus)) {
     throw new RangeError("motivation consensus must name a declared candidate");
-  }
-  const expectedConsensus = candidates.reduce((best, candidate) =>
-    consensusScores[candidate.id]! > consensusScores[best.id]! ? candidate : best,
-  ).id;
-  if (input.consensus !== expectedConsensus) {
-    throw new RangeError(`motivation consensus is inconsistent; expected ${expectedConsensus}`);
   }
   return Object.freeze({
     engine: input.engine,
@@ -259,44 +198,140 @@ export function createMotivationResult(input: MotivationResult): MotivationResul
   });
 }
 
-const dot = (goals: readonly number[], correlations: readonly number[]): Term => {
-  let level: Term[] = goals.map((weight, index) =>
-    mul(flt(weight), flt(correlations[index]!)),
+function candidateTerm(candidate: Candidate): Term {
+  return mettaCall(
+    "Candidate",
+    candidate.id,
+    mettaTuple(candidate.corr.map(mettaFloat)),
+    mettaFloat(candidate.risk),
   );
-  if (level.length === 0) return 0;
-  while (level.length > 1) {
-    const next: Term[] = [];
-    for (let index = 0; index < level.length; index += 2) {
-      const left = level[index]!;
-      const right = level[index + 1];
-      next.push(right === undefined ? left : add(left, right));
-    }
-    level = next;
+}
+
+function goalTerm(goal: GoalScenario["goals"][number]): Term {
+  return mettaCall(
+    "Goal",
+    mettaString(goal.id),
+    mettaSymbol(goal.kind),
+    mettaFloat(goal.weight),
+    goal.required,
+  );
+}
+
+function nativeCandidate(value: unknown, index: number, goalCount: number): Candidate {
+  if (
+    !Array.isArray(value) ||
+    value.length !== 4 ||
+    value[0] !== "Candidate" ||
+    typeof value[1] !== "string" ||
+    !Array.isArray(value[2]) ||
+    typeof value[3] !== "number" ||
+    !Number.isFinite(value[3]) ||
+    value[3] < 0 ||
+    value[3] > 1
+  ) {
+    throw new Error(`goalchainer.metta returned an invalid motivation candidate at index ${index}`);
   }
-  return level[0]!;
-};
+  const corr = finiteVector(value[2] as number[], `native motivation candidate ${index}`, [-1, 1]);
+  if (corr.length !== goalCount) {
+    throw new Error(`goalchainer.metta returned the wrong correlation count at index ${index}`);
+  }
+  return Object.freeze({ id: value[1], corr, risk: value[3] });
+}
 
-const scoreExpr = (goals: readonly number[], candidate: Candidate, withRisk: boolean): Term => {
-  const score = dot(goals, candidate.corr);
-  return withRisk ? sub(score, flt(candidate.risk)) : score;
-};
+function optionalCandidate(value: unknown, path: string): string | null {
+  if (Array.isArray(value) && value.length === 1 && value[0] === "None") return null;
+  if (
+    Array.isArray(value) &&
+    value.length === 2 &&
+    value[0] === "Some" &&
+    typeof value[1] === "string"
+  ) {
+    return value[1];
+  }
+  throw new Error(`goalchainer.metta returned an invalid ${path}`);
+}
 
-function bestBy(
-  db: MettaDB,
-  goals: readonly number[],
+function decodeMotivation(
+  value: unknown,
+  individual: readonly number[],
+  collective: readonly number[],
   candidates: readonly Candidate[],
-  withRisk: boolean,
-): string {
-  let best = candidates[0]!;
-  let bestScore = num(db, scoreExpr(goals, best, withRisk));
-  for (const candidate of candidates.slice(1)) {
-    const score = num(db, scoreExpr(goals, candidate, withRisk));
-    if (score > bestScore) {
-      best = candidate;
-      bestScore = score;
-    }
+): MotivationResult {
+  if (!Array.isArray(value) || value.length !== 7 || value[0] !== "MotivationResult") {
+    throw new Error("goalchainer.metta returned an invalid motivation result");
   }
-  return best.id;
+  const individualPull = optionalCandidate(value[1], "individual goal pull");
+  const collectivePull = optionalCandidate(value[2], "collective goal pull");
+  const individualPreference = optionalCandidate(value[3], "individual preference");
+  const collectivePreference = optionalCandidate(value[4], "collective preference");
+  if (!Array.isArray(value[5])) {
+    throw new Error("goalchainer.metta returned invalid motivation consensus scores");
+  }
+  const consensusScores: Record<string, number> = Object.create(null) as Record<string, number>;
+  for (const row of value[5]) {
+    if (
+      !Array.isArray(row) ||
+      row.length !== 3 ||
+      row[0] !== "ConsensusScore" ||
+      typeof row[1] !== "string" ||
+      typeof row[2] !== "number" ||
+      !Number.isFinite(row[2])
+    ) {
+      throw new Error("goalchainer.metta returned an invalid motivation score row");
+    }
+    consensusScores[row[1]] = row[2];
+  }
+  if (typeof value[6] !== "string") {
+    throw new Error("goalchainer.metta returned an invalid motivation consensus action");
+  }
+  const result = snapshotMotivationResult({
+    engine: MOTIVATION_ENGINE,
+    individual_goals: individual,
+    collective_goals: collective,
+    candidates,
+    goal_pull: { individual: individualPull, collective: collectivePull },
+    subsystem_preference: {
+      individual: individualPreference,
+      collective: collectivePreference,
+    },
+    consensus_scores: consensusScores,
+    consensus: value[6],
+  });
+  VALID_RESULTS.add(result);
+  return result;
+}
+
+function nativeMotivation(
+  individual: readonly number[],
+  collective: readonly number[],
+  candidates: readonly Candidate[],
+): MotivationResult {
+  const individualTerm = mettaTuple(individual.map(mettaFloat));
+  const collectiveTerm = mettaTuple(collective.map(mettaFloat));
+  const value = mettaOne(
+    sharedGoalChainerMetta(),
+    "gc-motivation-consensus",
+    individualTerm,
+    collectiveTerm,
+    mettaTuple(candidates.map(candidateTerm)),
+  );
+  return decodeMotivation(value, individual, collective, candidates);
+}
+
+/** Validate and deeply freeze a motivation result through the native relation. */
+export function createMotivationResult(input: MotivationResult): MotivationResult {
+  if (input !== null && typeof input === "object" && VALID_RESULTS.has(input)) return input;
+  const supplied = snapshotMotivationResult(input);
+  const expected = nativeMotivation(
+    supplied.individual_goals,
+    supplied.collective_goals,
+    supplied.candidates,
+  );
+  if (!isDeepStrictEqual(supplied, expected)) {
+    throw new RangeError("motivation result is inconsistent with goalchainer.metta");
+  }
+  VALID_RESULTS.add(supplied);
+  return supplied;
 }
 
 function finiteCorrelation(value: number, actionId: string, goalId: string): number {
@@ -306,23 +341,7 @@ function finiteCorrelation(value: number, actionId: string, goalId: string): num
   return value;
 }
 
-function candidateRisk(
-  actionId: string,
-  defaultStrength: number,
-  options: MotivationOptions,
-): number {
-  const risk = ownValue(options.risks, actionId) ?? roundN(1 - defaultStrength, 3);
-  if (!Number.isFinite(risk) || risk < 0 || risk > 1) {
-    throw new RangeError(`risk for ${actionId} must be finite and within [0, 1]`);
-  }
-  return risk;
-}
-
-/** Compute each subsystem preference and the disagreement-penalized consensus.
- *
- * The caller may provide negative or graded correlations. When omitted, an
- * action correlates 1 with each goal listed in `satisfies` and 0 otherwise.
- */
+/** Compute subsystem preferences and disagreement-penalized consensus in MeTTa. */
 export function consensusDecision(
   scenario: GoalScenario,
   strengthByAction: Readonly<Record<string, number>> = {},
@@ -369,75 +388,59 @@ export function consensusDecision(
     }
   }
 
-  const db = mettaDB();
-  const individual = validatedScenario.goals.map((goal) =>
-    goal.kind === "individual" ? goal.weight : 0,
-  );
-  const collective = validatedScenario.goals.map((goal) =>
-    goal.kind === "collective" ? goal.weight : 0,
-  );
-  const hasIndividual = individual.some((weight) => weight > 0);
-  const hasCollective = collective.some((weight) => weight > 0);
-
-  const candidates: Candidate[] = validatedScenario.actions.map((action) => {
-    const declared = new Set(action.satisfies);
+  const actions = validatedScenario.actions.map((action) => {
+    const satisfied = new Set(action.satisfies);
     const actionCorrelations = ownValue(options.correlations, action.id);
     if (actionCorrelations !== undefined) {
       assertPlainRecord(actionCorrelations, `motivation correlations.${action.id}`);
     }
-    const corr = validatedScenario.goals.map((goal) =>
-      finiteCorrelation(
-        ownValue(actionCorrelations, goal.id) ?? (declared.has(goal.id) ? 1 : 0),
-        action.id,
-        goal.id,
-      ),
-    );
+    const correlationSpecs = validatedScenario.goals.map((goal) => {
+      const explicit = ownValue(actionCorrelations, goal.id);
+      return explicit === undefined
+        ? mettaCall("DefaultCorrelation", satisfied.has(goal.id))
+        : mettaCall("ExplicitCorrelation", mettaFloat(explicit));
+    });
     const strength = ownValue(strengthByAction, action.id) ?? action.defaultStrength;
     if (!Number.isFinite(strength) || strength < 0 || strength > 1) {
       throw new RangeError(`evidence strength for ${action.id} must be within [0, 1]`);
     }
-    return {
-      id: action.id,
-      corr,
-      risk: candidateRisk(action.id, strength, options),
-    };
+    const explicitRisk = ownValue(options.risks, action.id);
+    const risk = explicitRisk === undefined
+      ? mettaCall("DefaultRisk", mettaFloat(strength))
+      : mettaCall("ExplicitRisk", mettaFloat(explicitRisk));
+    return mettaCall(
+      "MotivationAction",
+      mettaString(action.id),
+      mettaTuple(correlationSpecs),
+      risk,
+    );
   });
-
-  const consensusScores = Object.fromEntries(candidates.map((candidate) => {
-    const individualScore = scoreExpr(individual, candidate, true);
-    const collectiveScore = scoreExpr(collective, candidate, true);
-    const combined = hasIndividual && hasCollective
-      ? sub(
-          div(add(individualScore, collectiveScore), 2),
-          mul(0.25, mabs(sub(individualScore, collectiveScore))),
-        )
-      : hasIndividual
-        ? individualScore
-        : collectiveScore;
-    const score = num(db, combined);
-    return [candidate.id, score] as const;
-  }));
-
-  const consensus = candidates.reduce((best, candidate) =>
-    consensusScores[candidate.id]! > consensusScores[best.id]! ? candidate : best,
-  ).id;
-
-  return createMotivationResult({
-    engine: MOTIVATION_ENGINE,
-    individual_goals: individual,
-    collective_goals: collective,
-    candidates: candidates.map((candidate) => ({ ...candidate, corr: [...candidate.corr] })),
-    goal_pull: {
-      individual: hasIndividual ? bestBy(db, individual, candidates, false) : null,
-      collective: hasCollective ? bestBy(db, collective, candidates, false) : null,
-    },
-    subsystem_preference: {
-      individual: hasIndividual ? bestBy(db, individual, candidates, true) : null,
-      collective: hasCollective ? bestBy(db, collective, candidates, true) : null,
-    },
-    consensus_scores: consensusScores,
-    consensus,
-  });
+  const goals = mettaTuple(validatedScenario.goals.map(goalTerm));
+  const groups = sharedGoalChainerMetta().evalJsMany([
+    mettaCall("gc-motivation-mask", mettaSymbol("individual"), goals),
+    mettaCall("gc-motivation-mask", mettaSymbol("collective"), goals),
+    ...actions.map((action) => mettaCall("gc-motivation-candidate", action)),
+  ]);
+  if (groups.some((group) => group.length !== 1)) {
+    throw new Error("goalchainer.metta returned a non-deterministic motivation projection");
+  }
+  const individualValue = groups[0]![0];
+  const collectiveValue = groups[1]![0];
+  if (!Array.isArray(individualValue) || !Array.isArray(collectiveValue)) {
+    throw new Error("goalchainer.metta returned invalid motivation goal masks");
+  }
+  const individual = finiteVector(individualValue as number[], "native individual goals", [0, 1]);
+  const collective = finiteVector(collectiveValue as number[], "native collective goals", [0, 1]);
+  if (
+    individual.length !== validatedScenario.goals.length ||
+    collective.length !== validatedScenario.goals.length
+  ) {
+    throw new Error("goalchainer.metta returned invalid motivation scenario dimensions");
+  }
+  const candidates = groups.slice(2).map((group, index) =>
+    nativeCandidate(group[0], index, validatedScenario.goals.length)
+  );
+  return nativeMotivation(individual, collective, candidates);
 }
 
 export function motivationSummary(result: MotivationResult): Record<string, unknown> {

@@ -2,13 +2,16 @@
 
 export * from "./models.js";
 export * from "./input.js";
-export * from "./engine.js";
 export * from "./deontic.js";
 export * from "./pln.js";
 export * from "./snars.js";
 export * from "./motivation.js";
 export * from "./native_score.js";
-export { DecisionEngine, type EvidenceReasoner } from "./score.js";
+export {
+  DecisionEngine,
+  type DecisionRanking,
+  type EvidenceReasoner,
+} from "./score.js";
 export * from "./reasoner.js";
 export * from "./truth_value.js";
 export * from "./prolog.js";

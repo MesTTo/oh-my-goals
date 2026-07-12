@@ -1,19 +1,16 @@
-// Generic task planning and claim lifecycle on the @metta-ts interpreter.
-
-import {
-  If,
-  Match,
-  e,
-  eq,
-  ground,
-  names,
-  or,
-  vars,
-} from "@metta-ts/edsl";
-import { importPrologFunctionsFromFile } from "@metta-ts/edsl/prolog";
+// Generic task planning and claim lifecycle through goalchainer.metta.
 
 import { NORM_STATUSES, type NormStatus } from "./deontic.js";
-import { mettaDB, type MettaDB } from "./engine.js";
+import {
+  createGoalChainerMetta,
+  mettaCall,
+  mettaInteger,
+  mettaString,
+  mettaSymbol,
+  sharedGoalChainerMetta,
+  type GoalChainerMetta,
+  type Term,
+} from "./metta.js";
 import { resolvePrologExecutable } from "./prolog_runtime.js";
 import { assertDenseArray, assertKnownKeys, assertPlainRecord, ownValue } from "./records.js";
 
@@ -114,42 +111,6 @@ const TASK_STATE_SET: ReadonlySet<string> = new Set(DIRECTIVE_TASK_STATES);
 const NORM_STATUS_SET: ReadonlySet<string> = new Set(NORM_STATUSES);
 const PROLOG_ASSET = new URL("../assets/gc_directive.pl", import.meta.url);
 
-type DirectiveName =
-  | NormStatus
-  | DirectiveTaskState
-  | "invalid"
-  | "claimed"
-  | "directive-task-state-for-norm"
-  | "directive-task-order"
-  | "directive-task-state"
-  | "directive-task-assignment"
-  | "directive-claim-open"
-  | "directive-task-claim"
-  | "directive-status-rows"
-  | "directive-next-rows"
-  | "directive-readiness"
-  | "directive-known-task"
-  | "directive-duplicate-claim"
-  | "directive-claimable"
-  | "directive-claim-receipt"
-  | "gc_task_state";
-
-const n = names<DirectiveName>();
-const taskStateForNorm = n["directive-task-state-for-norm"];
-const taskOrder = n["directive-task-order"];
-const taskState = n["directive-task-state"];
-const taskAssignment = n["directive-task-assignment"];
-const claimOpen = n["directive-claim-open"];
-const taskClaim = n["directive-task-claim"];
-const statusRows = n["directive-status-rows"];
-const nextRows = n["directive-next-rows"];
-const readiness = n["directive-readiness"];
-const knownTask = n["directive-known-task"];
-const duplicateClaim = n["directive-duplicate-claim"];
-const claimable = n["directive-claimable"];
-const claimReceipt = n["directive-claim-receipt"];
-const prologTaskState = n.gc_task_state;
-
 function isNormStatus(value: unknown): value is NormStatus {
   return typeof value === "string" && NORM_STATUS_SET.has(value);
 }
@@ -182,26 +143,6 @@ function normStatusForTask(statuses: NormStatusByTask, taskId: string): NormStat
   return value;
 }
 
-function installTaskStateRule(db: MettaDB): void {
-  const { status } = vars<{ status: string }>();
-  db.rule(
-    taskStateForNorm(status),
-    If(
-      eq(status, n.obligated),
-      n.ready,
-      If(
-        or(eq(status, n.forbidden), eq(status, n.conflict)),
-        n.blocked,
-        If(
-          or(eq(status, n.permitted), eq(status, n.unregulated)),
-          n.backlog,
-          n.invalid,
-        ),
-      ),
-    ),
-  );
-}
-
 /** Map ordered caller-supplied task IDs from norm status to directive state. */
 export function classifyTaskStates(
   taskIds: readonly string[],
@@ -214,16 +155,17 @@ export function classifyTaskStates(
   if (unknownTaskIds.length > 0) {
     throw new RangeError(`norm statuses reference unknown task IDs: ${unknownTaskIds.join(", ")}`);
   }
-  const db = mettaDB();
-  installTaskStateRule(db);
-
-  const output = taskIds.map((taskId) => {
-    const normStatus = normStatusForTask(normStatusByTask, taskId);
-    const result = db.evalJs(taskStateForNorm(n[normStatus]))[0];
-    if (!isTaskState(result)) {
-      throw new Error(`@metta-ts returned invalid task state for ${taskId}: ${String(result)}`);
+  const groups = sharedGoalChainerMetta().evalJsMany(taskIds.map((taskId) =>
+    mettaCall("gc-directive-task-state", mettaSymbol(normStatusForTask(normStatusByTask, taskId))),
+  ));
+  const output = groups.map((values, index) => {
+    const taskId = taskIds[index]!;
+    if (values.length !== 1 || !isTaskState(values[0])) {
+      throw new Error(
+        `goalchainer.metta returned invalid task state for ${taskId}: ${JSON.stringify(values)}`,
+      );
     }
-    return result;
+    return values[0];
   });
   const states = Object.freeze(
     Object.fromEntries(taskIds.map((taskId, index) => [taskId, output[index]!])) as Record<
@@ -234,68 +176,18 @@ export function classifyTaskStates(
   return { states, output: Object.freeze(output) };
 }
 
-function installLifecycleRules(db: MettaDB): void {
-  const { task, order, state, agent, rule, version } = vars<{
-    task: string;
-    order: number;
-    state: DirectiveTaskState;
-    agent: string;
-    rule: string;
-    version: number;
-  }>();
-
-  db.rule(
-    statusRows(n.ready),
-    Match(taskState(task, n.ready), Match(taskOrder(task, order), e(order, task))),
-  );
-  db.rule(
-    statusRows(n.blocked),
-    Match(taskState(task, n.blocked), Match(taskOrder(task, order), e(order, task))),
-  );
-  db.rule(
-    statusRows(n.claimed),
-    Match(taskClaim(task, agent, version), Match(taskOrder(task, order), e(order, task))),
-  );
-  db.rule(readiness(task), Match(taskState(task, state), state));
-  db.rule(knownTask(task), Match(taskOrder(task, order), true));
-  db.rule(
-    duplicateClaim(task),
-    Match(taskClaim(task, agent, version), e(agent, version)),
-  );
-  db.rule(
-    claimable(task),
-    Match(taskState(task, n.ready), Match(claimOpen(task), true)),
-  );
-  db.rule(
-    claimReceipt(task),
-    Match(taskClaim(task, agent, version), e(task, agent, version)),
-  );
-  db.rule(
-    nextRows(),
-    Match(
-      taskState(task, n.ready),
-      Match(
-        claimOpen(task),
-        Match(
-          taskOrder(task, order),
-          Match(taskAssignment(task, agent, rule), e(order, task, agent, rule)),
-        ),
-      ),
-    ),
-  );
-}
-
 function orderedTasks(rows: readonly unknown[], context: string): string[] {
   const parsed = rows.map((row) => {
     if (
       !Array.isArray(row) ||
-      row.length !== 2 ||
-      typeof row[0] !== "number" ||
-      typeof row[1] !== "string"
+      row.length !== 3 ||
+      row[0] !== "DirectiveStatusRow" ||
+      typeof row[1] !== "number" ||
+      typeof row[2] !== "string"
     ) {
-      throw new Error(`@metta-ts returned invalid ${context} row: ${JSON.stringify(row)}`);
+      throw new Error(`goalchainer.metta returned invalid ${context} row: ${JSON.stringify(row)}`);
     }
-    return { order: row[0], task: row[1] };
+    return { order: row[1], task: row[2] };
   });
   return parsed.sort((left, right) => left.order - right.order).map((row) => row.task);
 }
@@ -304,31 +196,51 @@ function readDuplicateClaim(value: unknown, task: string): DirectiveClaim | unde
   if (value === undefined) return undefined;
   if (
     !Array.isArray(value) ||
-    value.length !== 2 ||
-    typeof value[0] !== "string" ||
-    typeof value[1] !== "number"
+    value.length !== 3 ||
+    value[0] !== "ExistingClaim" ||
+    typeof value[1] !== "string" ||
+    typeof value[2] !== "number" ||
+    !Number.isSafeInteger(value[2])
   ) {
-    throw new Error(`@metta-ts returned invalid duplicate-claim guard for ${task}`);
+    throw new Error(`goalchainer.metta returned invalid duplicate-claim guard for ${task}`);
   }
-  return { ok: true, task, agent: value[0], version: value[1] };
+  return { ok: true, task, agent: value[1], version: value[2] };
 }
 
 function readClaimReceipt(value: unknown, task: string): DirectiveClaim {
   if (
     !Array.isArray(value) ||
-    value.length !== 3 ||
-    value[0] !== task ||
-    typeof value[1] !== "string" ||
-    typeof value[2] !== "number"
+    value.length !== 4 ||
+    value[0] !== "ClaimReceipt" ||
+    value[1] !== task ||
+    typeof value[2] !== "string" ||
+    typeof value[3] !== "number" ||
+    !Number.isSafeInteger(value[3])
   ) {
-    throw new Error(`@metta-ts returned invalid claim receipt for ${task}`);
+    throw new Error(`goalchainer.metta returned invalid claim receipt for ${task}`);
   }
-  return { ok: true, task, agent: value[1], version: value[2] };
+  return { ok: true, task, agent: value[2], version: value[3] };
 }
 
-/** A fact-backed task lifecycle. Every observable result is read through MeTTa rules. */
+function taskFact(
+  task: string,
+  order: number,
+  state: DirectiveTaskState,
+  agent: string,
+): Term {
+  return mettaCall(
+    "DirectiveTask",
+    mettaString(task),
+    mettaInteger(order),
+    mettaSymbol(state),
+    mettaString(agent),
+    mettaString(`assign:${task}`),
+  );
+}
+
+/** A fact-backed task lifecycle. MeTTa derives every observable state transition guard. */
 export class DirectiveLifecycle {
-  private readonly db = mettaDB();
+  private readonly db: GoalChainerMetta = createGoalChainerMetta();
   private readonly taskIds: readonly string[];
   private readonly agent: string;
 
@@ -349,43 +261,49 @@ export class DirectiveLifecycle {
       );
     }
     this.agent = config.agent;
-    installLifecycleRules(this.db);
-
     config.taskIds.forEach((taskId, order) => {
       const state = ownValue(config.taskStates, taskId);
       if (!isTaskState(state)) {
         throw new TypeError(`unsupported task state for ${taskId}: ${String(state)}`);
       }
       this.db.add(
-        taskOrder(taskId, order),
-        taskState(taskId, n[state]),
-        taskAssignment(taskId, config.agent, `assign:${taskId}`),
-        claimOpen(taskId),
+        taskFact(taskId, order, state, config.agent),
+        mettaCall("DirectiveClaimOpen", mettaString(taskId)),
       );
     });
   }
 
   status(): DirectiveStatus {
     return {
-      ready: orderedTasks(this.db.evalJs(statusRows(n.ready)), "ready status"),
-      blocked: orderedTasks(this.db.evalJs(statusRows(n.blocked)), "blocked status"),
-      claimed: orderedTasks(this.db.evalJs(statusRows(n.claimed)), "claimed status"),
+      ready: orderedTasks(
+        this.db.evalJs(mettaCall("gc-directive-status-rows", mettaSymbol("ready"))),
+        "ready status",
+      ),
+      blocked: orderedTasks(
+        this.db.evalJs(mettaCall("gc-directive-status-rows", mettaSymbol("blocked"))),
+        "blocked status",
+      ),
+      claimed: orderedTasks(
+        this.db.evalJs(mettaCall("gc-directive-status-rows", mettaSymbol("claimed"))),
+        "claimed status",
+      ),
     };
   }
 
   next(): DirectiveAssignment[] {
-    const rows = this.db.evalJs(nextRows()).map((row) => {
+    const rows = this.db.evalJs(mettaCall("gc-directive-next-rows")).map((row) => {
       if (
         !Array.isArray(row) ||
-        row.length !== 4 ||
-        typeof row[0] !== "number" ||
-        typeof row[1] !== "string" ||
+        row.length !== 5 ||
+        row[0] !== "DirectiveNextRow" ||
+        typeof row[1] !== "number" ||
         typeof row[2] !== "string" ||
-        typeof row[3] !== "string"
+        typeof row[3] !== "string" ||
+        typeof row[4] !== "string"
       ) {
-        throw new Error(`@metta-ts returned invalid next-assignment row: ${JSON.stringify(row)}`);
+        throw new Error(`goalchainer.metta returned invalid next-assignment row: ${JSON.stringify(row)}`);
       }
-      return { order: row[0], task: row[1], agent: row[2], rule: row[3] };
+      return { order: row[1], task: row[2], agent: row[3], rule: row[4] };
     });
     return rows
       .sort((left, right) => left.order - right.order)
@@ -394,39 +312,51 @@ export class DirectiveLifecycle {
 
   claim(task: string): DirectiveClaimResult {
     validateIdentifier(task, "task id");
-    if (this.db.evalJs(knownTask(task))[0] !== true) {
+    const taskId = mettaString(task);
+    if (this.db.evalJs(mettaCall("gc-directive-known-task", taskId))[0] !== true) {
       return { ok: false, code: "task_not_found", task, available: [...this.taskIds] };
     }
-
-    const duplicate = readDuplicateClaim(this.db.evalJs(duplicateClaim(task))[0], task);
+    const duplicate = readDuplicateClaim(
+      this.db.evalJs(mettaCall("gc-directive-duplicate-claim", taskId))[0],
+      task,
+    );
     if (duplicate !== undefined) {
       return { ok: false, code: "already_claimed", task, claim: duplicate };
     }
-
-    const state = this.db.evalJs(readiness(task))[0];
+    const state = this.db.evalJs(mettaCall("gc-directive-readiness", taskId))[0];
     if (!isTaskState(state)) {
-      throw new Error(`@metta-ts returned invalid readiness for ${task}: ${String(state)}`);
+      throw new Error(`goalchainer.metta returned invalid readiness for ${task}: ${String(state)}`);
     }
     if (state !== "ready") return { ok: false, code: "not_ready", task, state };
-    if (this.db.evalJs(claimable(task))[0] !== true) {
-      throw new Error(`@metta-ts rejected an unclaimed ready task: ${task}`);
+    if (this.db.evalJs(mettaCall("gc-directive-claimable", taskId))[0] !== true) {
+      throw new Error(`goalchainer.metta rejected an unclaimed ready task: ${task}`);
     }
 
-    const openFact = claimOpen(task);
-    const claimFact = taskClaim(task, this.agent, 1);
-    if (!this.db.metta.space().removeAtom(ground(openFact))) {
-      const raced = readDuplicateClaim(this.db.evalJs(duplicateClaim(task))[0], task);
+    const openFact = mettaCall("DirectiveClaimOpen", taskId);
+    const claimFact = mettaCall(
+      "DirectiveClaim",
+      taskId,
+      mettaString(this.agent),
+      mettaInteger(1),
+    );
+    if (!this.db.remove(openFact)) {
+      const raced = readDuplicateClaim(
+        this.db.evalJs(mettaCall("gc-directive-duplicate-claim", taskId))[0],
+        task,
+      );
       if (raced !== undefined) {
         return { ok: false, code: "already_claimed", task, claim: raced };
       }
       throw new Error(`claim slot disappeared for ${task}`);
     }
-
     try {
       this.db.add(claimFact);
-      return readClaimReceipt(this.db.evalJs(claimReceipt(task))[0], task);
+      return readClaimReceipt(
+        this.db.evalJs(mettaCall("gc-directive-claim-receipt", taskId))[0],
+        task,
+      );
     } catch (error) {
-      this.db.metta.space().removeAtom(ground(claimFact));
+      this.db.remove(claimFact);
       this.db.add(openFact);
       throw error;
     }
@@ -485,7 +415,7 @@ function ensureImported(importResults: readonly { toString(): string }[]): void 
   }
 }
 
-/** Compare the MeTTa task-state rule with the packaged file through live SWI-Prolog. */
+/** Compare the native task-state relation with the packaged SWI-Prolog predicate. */
 export async function checkDirectivePrologParity(
   options: DirectivePrologParityOptions = {},
 ): Promise<DirectivePrologParity> {
@@ -507,14 +437,20 @@ export async function checkDirectivePrologParity(
     throw new TypeError("directive Prolog executable must be a nonblank string");
   }
   const resolvedExecutable = resolvePrologExecutable(executable);
-
-  const [{ fileURLToPath }, { registerPrologInterop }, { swiPrologBridge }] = await Promise.all([
+  const [
+    { fileURLToPath },
+    { mettaDB },
+    { importPrologFunctionsFromFile },
+    { registerPrologInterop },
+    { swiPrologBridge },
+  ] = await Promise.all([
     import("node:url"),
+    import("@metta-ts/edsl"),
+    import("@metta-ts/edsl/prolog"),
     import("@metta-ts/prolog"),
     import("@metta-ts/prolog/swi-node"),
   ]);
   const bridge = swiPrologBridge({ executable: resolvedExecutable });
-
   try {
     const db = mettaDB();
     registerPrologInterop(db.metta, bridge);
@@ -523,7 +459,6 @@ export async function checkDirectivePrologParity(
         importPrologFunctionsFromFile(fileURLToPath(PROLOG_ASSET), ["gc_task_state"]),
       ),
     );
-
     const taskIds = normStatuses.map((_, index) => `parity-${index}`);
     const statusByTask = Object.fromEntries(
       taskIds.map((taskId, index) => [taskId, normStatuses[index]!]),
@@ -531,7 +466,9 @@ export async function checkDirectivePrologParity(
     const mettaStates = classifyTaskStates(taskIds, statusByTask).output;
     const rows: DirectivePrologParityRow[] = [];
     for (const [index, normStatus] of normStatuses.entries()) {
-      const results = await db.evalJsAsync(prologTaskState(n[normStatus]));
+      const results = await db.evalJsAsync(
+        mettaCall("gc_task_state", mettaSymbol(normStatus)),
+      );
       if (results.length !== 1 || !isTaskState(results[0])) {
         throw new Error(
           `SWI-Prolog returned invalid task state for ${normStatus}: ${JSON.stringify(results)}`,

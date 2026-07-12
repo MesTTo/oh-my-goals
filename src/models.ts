@@ -3,7 +3,16 @@
 // report dicts (decisionToDict) retain the source field names and snake_case shape.
 
 import { assertDenseArray, assertKnownKeys, assertPlainRecord } from "./records.js";
+import {
+  mettaFloat,
+  mettaOne,
+  mettaSymbol,
+  sharedGoalChainerMetta,
+} from "./metta.js";
 import { parseStv } from "./truth_value.js";
+import { round6 } from "./rounding.js";
+
+export { round6, roundN } from "./rounding.js";
 
 export type GoalKind = "individual" | "collective";
 export type NormMode = "oblige" | "permit" | "forbid";
@@ -31,6 +40,22 @@ const DECISION_STATUS_SET: ReadonlySet<string> = new Set([
   "candidate",
   "weak",
 ]);
+const VALID_GOALS = new WeakSet<object>();
+const VALID_NORMS = new WeakSet<object>();
+const VALID_ACTIONS = new WeakSet<object>();
+const VALID_EVIDENCE = new WeakSet<object>();
+const VALID_SCENARIOS = new WeakSet<object>();
+const VALID_DECISIONS = new WeakSet<object>();
+
+function isValidated<T extends object>(set: WeakSet<object>, value: unknown): value is T {
+  return value !== null && typeof value === "object" && set.has(value);
+}
+
+function freezeValidated<T extends object>(set: WeakSet<object>, value: T): Readonly<T> {
+  const frozen = Object.freeze(value);
+  set.add(frozen);
+  return frozen;
+}
 
 /** Derive the only valid status for a scored decision. */
 export function deriveDecisionStatus(
@@ -47,10 +72,17 @@ export function deriveDecisionStatus(
   if (!DEONTIC_STATUS_SET.has(normStatus)) {
     throw new RangeError(`unsupported decision norm status: ${String(normStatus)}`);
   }
-  if (normStatus === "forbidden" || normStatus === "conflict") return "blocked";
-  if (score >= 0.72 && missingRequiredCount === 0) return "recommended";
-  if (score >= 0.5) return "candidate";
-  return "weak";
+  const status = mettaOne(
+    sharedGoalChainerMetta(),
+    "gc-decision-status",
+    mettaSymbol(normStatus),
+    mettaFloat(score),
+    missingRequiredCount,
+  );
+  if (typeof status !== "string" || !DECISION_STATUS_SET.has(status)) {
+    throw new Error(`goalchainer.metta returned an invalid decision status: ${String(status)}`);
+  }
+  return status as DecisionStatus;
 }
 
 export interface Goal {
@@ -222,6 +254,7 @@ export function totalGoalWeight(goals: readonly Goal[]): number {
 
 /** Construct a frozen Goal with the source default and weight invariant. */
 export function createGoal(input: GoalInput): Goal {
+  if (isValidated<Goal>(VALID_GOALS, input)) return input;
   assertPlainRecord(input, "goal");
   assertKnownKeys(input, "goal", ["id", "owner", "statement", "weight", "kind", "required"]);
   nonblank(input.id, "goal id");
@@ -240,7 +273,7 @@ export function createGoal(input: GoalInput): Goal {
   if (typeof required !== "boolean") {
     throw new TypeError(`goal required flag must be boolean: ${input.id}`);
   }
-  return Object.freeze({
+  return freezeValidated(VALID_GOALS, {
     id: input.id,
     owner: input.owner,
     statement: input.statement,
@@ -252,6 +285,7 @@ export function createGoal(input: GoalInput): Goal {
 
 /** Construct a frozen Norm with the source priority default. */
 export function createNorm(input: NormInput): Norm {
+  if (isValidated<Norm>(VALID_NORMS, input)) return input;
   assertPlainRecord(input, "norm");
   assertKnownKeys(input, "norm", ["id", "mode", "targetAction", "reason", "priority"]);
   nonblank(input.id, "norm id");
@@ -264,7 +298,7 @@ export function createNorm(input: NormInput): Norm {
   if (!Number.isSafeInteger(priority)) {
     throw new RangeError(`norm priority must be a finite integer: ${input.id}`);
   }
-  return Object.freeze({
+  return freezeValidated(VALID_NORMS, {
     id: input.id,
     mode: input.mode,
     targetAction: input.targetAction,
@@ -275,6 +309,7 @@ export function createNorm(input: NormInput): Norm {
 
 /** Construct a frozen CandidateAction and enforce its probability bounds. */
 export function createCandidateAction(input: CandidateActionInput): CandidateAction {
+  if (isValidated<CandidateAction>(VALID_ACTIONS, input)) return input;
   assertPlainRecord(input, "candidate action");
   assertKnownKeys(input, "candidate action", [
     "id",
@@ -324,7 +359,7 @@ export function createCandidateAction(input: CandidateActionInput): CandidateAct
     input.defaultConfidence === undefined ? 0 : input.defaultConfidence,
     `default_confidence outside [0, 1]: ${input.id}`,
   );
-  return Object.freeze({
+  return freezeValidated(VALID_ACTIONS, {
     id: input.id,
     label: input.label,
     description: input.description,
@@ -338,6 +373,7 @@ export function createCandidateAction(input: CandidateActionInput): CandidateAct
 
 /** Construct a frozen EvidenceProjection with independent proof storage. */
 export function createEvidenceProjection(input: EvidenceProjectionInput): EvidenceProjection {
+  if (isValidated<EvidenceProjection>(VALID_EVIDENCE, input)) return input;
   assertPlainRecord(input, "evidence projection");
   assertKnownKeys(input, "evidence projection", [
     "strength",
@@ -381,7 +417,7 @@ export function createEvidenceProjection(input: EvidenceProjectionInput): Eviden
     input.proofs === undefined ? [] : input.proofs,
     "evidence proofs",
   );
-  return Object.freeze({
+  return freezeValidated(VALID_EVIDENCE, {
     strength,
     confidence,
     source: input.source,
@@ -394,6 +430,7 @@ export function createEvidenceProjection(input: EvidenceProjectionInput): Eviden
 
 /** Construct a frozen GoalScenario with independent tuple-like lists. */
 export function createGoalScenario(input: GoalScenarioInput): GoalScenario {
+  if (isValidated<GoalScenario>(VALID_SCENARIOS, input)) return input;
   assertPlainRecord(input, "goal scenario");
   assertKnownKeys(input, "goal scenario", ["title", "goals", "norms", "actions", "notes"]);
   nonblank(input.title, "scenario title");
@@ -431,7 +468,7 @@ export function createGoalScenario(input: GoalScenarioInput): GoalScenario {
       throw new RangeError(`norm ${norm.id} references unknown action ID: ${norm.targetAction}`);
     }
   }
-  return Object.freeze({
+  return freezeValidated(VALID_SCENARIOS, {
     title: input.title,
     goals,
     norms,
@@ -442,6 +479,7 @@ export function createGoalScenario(input: GoalScenarioInput): GoalScenario {
 
 /** Construct a frozen Decision with fresh list and metadata defaults. */
 export function createDecision(input: DecisionInput): Decision {
+  if (isValidated<Decision>(VALID_DECISIONS, input)) return input;
   assertPlainRecord(input, "decision");
   assertKnownKeys(input, "decision", [
     "actionId",
@@ -535,7 +573,7 @@ export function createDecision(input: DecisionInput): Decision {
       `evidence deontic status ${evidence.deontic} does not match decision norm status ${input.normStatus}`,
     );
   }
-  return Object.freeze({
+  return freezeValidated(VALID_DECISIONS, {
     actionId: input.actionId,
     label: input.label,
     status: input.status,
@@ -551,65 +589,6 @@ export function createDecision(input: DecisionInput): Decision {
     warnings,
     metadata,
   });
-}
-
-/** Round to 6 decimal places the way Python's round() does for these reports. */
-export function round6(x: number): number {
-  return roundN(x, 6);
-}
-
-/** Round a binary64 number to decimal places using Python's ties-to-even rule. */
-export function roundN(x: number, digits: number): number {
-  if (!Number.isInteger(digits)) {
-    throw new TypeError("digits must be an integer");
-  }
-  if (typeof x !== "number") throw new TypeError("value must be a number");
-  if (!Number.isFinite(x) || x === 0 || digits > 323) return x;
-  if (digits < -308) return x < 0 ? -0 : 0;
-
-  const negative = x < 0;
-  const view = new DataView(new ArrayBuffer(8));
-  view.setFloat64(0, Math.abs(x));
-  const bits = view.getBigUint64(0);
-  const exponentBits = Number((bits >> 52n) & 0x7ffn);
-  const fraction = bits & ((1n << 52n) - 1n);
-
-  let numerator: bigint;
-  let binaryExponent: number;
-  if (exponentBits === 0) {
-    numerator = fraction;
-    binaryExponent = -1074;
-  } else {
-    numerator = (1n << 52n) | fraction;
-    binaryExponent = exponentBits - 1023 - 52;
-  }
-
-  let denominator = 1n;
-  if (binaryExponent >= 0) {
-    numerator <<= BigInt(binaryExponent);
-  } else {
-    denominator <<= BigInt(-binaryExponent);
-  }
-  if (digits >= 0) {
-    numerator *= 10n ** BigInt(digits);
-  } else {
-    denominator *= 10n ** BigInt(-digits);
-  }
-
-  let rounded = numerator / denominator;
-  const twiceRemainder = (numerator % denominator) * 2n;
-  if (
-    twiceRemainder > denominator ||
-    (twiceRemainder === denominator && rounded % 2n === 1n)
-  ) {
-    rounded += 1n;
-  }
-
-  const result = Number(`${negative ? "-" : ""}${rounded}e${-digits}`);
-  if (!Number.isFinite(result)) {
-    throw new RangeError("rounded value too large to represent");
-  }
-  return result;
 }
 
 /** Serialize a Decision while retaining the authoritative unrounded score. */

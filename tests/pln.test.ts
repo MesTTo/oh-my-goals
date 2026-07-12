@@ -34,12 +34,11 @@ describe("generic PLN reasoning", () => {
     expect(result.beliefs.action_one!.proof).toBe(
       '(: (rule-proof "rule_one" "fact_one") (Acceptable "action_one") (STV 0.5 0.44999999999999996))',
     );
-    expect(result.deductionProgram).toContain('(pln-rule 0 "supports_goal" "rule_one" 0.8 0.9)');
+    expect(result.deductionProgram).toContain('(PlnRule "rule_one" "supports_goal" 0.8 0.9)');
     expect(result.deductionProgram).toContain(
-      '(pln-fact 0 "action_one" "fact_one" "supports_goal" 0.5 0.7)',
+      '(PlnFact "fact_one" "action_one" "supports_goal" 0.5 0.7)',
     );
-    expect(result.deductionProgram).toContain("(= (pln-deduction $action)");
-    expect(result.deductionProgram).toContain('!(pln-deduction "action_one")');
+    expect(result.deductionProgram).toContain('!(gc-pln-evaluate "action_one"');
     expect(JSON.parse(result.rawOutputs[0]!)).toEqual([
       [0, 0, "rule_one", "fact_one", 0.5, 0.44999999999999996],
     ]);

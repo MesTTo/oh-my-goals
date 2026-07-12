@@ -1,11 +1,14 @@
-// COLORE ontology context for GoalChainer. Ports goal_chainer/ontology.py.
-// Parses the vendored COLORE export (assets/data-colore.metta) into module /
-// axiom / predicate counts and goal-directed projection rules.
+// Parse a COLORE source and check caller-declared projection rules.
 
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const COLORE_ASSET = new URL("../assets/data-colore.metta", import.meta.url);
+import {
+  mettaOne,
+  mettaString,
+  sharedGoalChainerMetta,
+} from "./metta.js";
+import { assertDenseArray, assertKnownKeys, assertPlainRecord } from "./records.js";
 
 const MODULE_RE = /^\(colore module (\S+) "([^"]+)"\)$/;
 const AXIOM_RE = /^\(colore axiom (\S+) (\S+) (\S+) (.+)\)$/;
@@ -33,6 +36,16 @@ export interface ProjectionRule {
   gloss: string;
 }
 
+export interface ProjectionSpec {
+  readonly id: string;
+  readonly module: string;
+  readonly axiomId: string;
+  readonly expectedKind: string;
+  readonly expectedExpression: string;
+  readonly from: readonly string[];
+  readonly to: string;
+}
+
 export interface OntologyContext {
   source_path: string;
   source_available: boolean;
@@ -45,56 +58,98 @@ export interface OntologyContext {
   projection_rules: ProjectionRule[];
 }
 
-const SELECTED_AXIOM_KEYS: [string, string][] = [
-  ["timepoints/lp_ordering", "a1"],
-  ["kinship/definitions/hasGrandchild", "HGC-1"],
-  ["kinship/definitions/hasSibling", "HS-1"],
-];
+function nonblank(value: unknown, path: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new TypeError(`${path} must be a nonblank string`);
+  }
+  return value;
+}
 
-const PROJECTION_SPECS = [
-  {
-    id: "time-before-transitivity",
-    key: ["timepoints/lp_ordering", "a1"] as [string, string],
-    expectedKind: "horn",
-    expectedExpression: "(forall ($x $y $z) (if (and (timepoint $x) (timepoint $y) (timepoint $z) (before $x $y) (before $y $z)) (before $x $z)))",
-    from: ["timepoint(x)", "timepoint(y)", "timepoint(z)", "before(x, y)", "before(y, z)"],
-    to: "before(x, z)",
-  },
-  {
-    id: "relation-composition-grandchild",
-    key: ["kinship/definitions/hasGrandchild", "HGC-1"] as [string, string],
-    expectedKind: "definition",
-    expectedExpression: "(forall ($x $z) (iff (hasGrandchild $x $z) (exists ($y) (and (hasChild $x $y) (hasChild $y $z) (not (= $x $y)) (not (= $y $z)) (not (= $x $z))))))",
-    from: ["hasChild(x, y)", "hasChild(y, z)", "x != y", "y != z", "x != z"],
-    to: "hasGrandchild(x, z)",
-  },
-  {
-    id: "relation-composition-sibling",
-    key: ["kinship/definitions/hasSibling", "HS-1"] as [string, string],
-    expectedKind: "definition",
-    expectedExpression: "(forall ($x $y) (iff (hasSibling $x $y) (exists ($z) (and (hasChild $z $x) (hasChild $z $y) (not (= $x $y))))))",
-    from: ["hasChild(z, x)", "hasChild(z, y)", "x != y"],
-    to: "hasSibling(x, y)",
-  },
-];
+function snapshotProjectionSpecs(specs: readonly ProjectionSpec[]): readonly ProjectionSpec[] {
+  assertDenseArray(specs, "projection specs");
+  const ids = new Set<string>();
+  return Object.freeze(specs.map((spec, index) => {
+    const path = `projection specs[${index}]`;
+    assertPlainRecord(spec, path);
+    assertKnownKeys(spec, path, [
+      "id",
+      "module",
+      "axiomId",
+      "expectedKind",
+      "expectedExpression",
+      "from",
+      "to",
+    ]);
+    const id = nonblank(spec.id, `${path}.id`);
+    if (ids.has(id)) throw new RangeError(`duplicate projection spec ID: ${id}`);
+    ids.add(id);
+    assertDenseArray(spec.from, `${path}.from`);
+    const from = Object.freeze(spec.from.map((premise, premiseIndex) =>
+      nonblank(premise, `${path}.from[${premiseIndex}]`),
+    ));
+    return Object.freeze({
+      id,
+      module: nonblank(spec.module, `${path}.module`),
+      axiomId: nonblank(spec.axiomId, `${path}.axiomId`),
+      expectedKind: nonblank(spec.expectedKind, `${path}.expectedKind`),
+      expectedExpression: nonblank(
+        spec.expectedExpression,
+        `${path}.expectedExpression`,
+      ),
+      from,
+      to: nonblank(spec.to, `${path}.to`),
+    });
+  }));
+}
 
-function projectionRules(axioms: Map<string, ColoreAxiom>): ProjectionRule[] {
-  return PROJECTION_SPECS.map((spec) => {
-    const axiom = axioms.get(axiomKey(spec.key[0], spec.key[1]));
-    const available =
-      axiom !== undefined &&
-      axiom.kind === spec.expectedKind &&
-      axiom.expression === spec.expectedExpression;
+function projectionAvailable(axiom: ColoreAxiom, spec: ProjectionSpec): boolean {
+  const value = mettaOne(
+    sharedGoalChainerMetta(),
+    "gc-projection-available",
+    mettaString(axiom.kind),
+    mettaString(axiom.expression),
+    mettaString(spec.expectedKind),
+    mettaString(spec.expectedExpression),
+  );
+  if (typeof value !== "boolean") {
+    throw new Error("goalchainer.metta returned an invalid projection availability");
+  }
+  return value;
+}
+
+function projectionRules(
+  axioms: ReadonlyMap<string, ColoreAxiom>,
+  specs: readonly ProjectionSpec[],
+): ProjectionRule[] {
+  return specs.map((spec) => {
+    const axiom = axioms.get(axiomKey(spec.module, spec.axiomId));
     return {
       id: spec.id,
-      source: `${spec.key[0]}/${spec.key[1]}`,
-      available,
+      source: `${spec.module}/${spec.axiomId}`,
+      available: axiom !== undefined && projectionAvailable(axiom, spec),
       kind: axiom ? axiom.kind : null,
       from: [...spec.from],
       to: spec.to,
       gloss: axiom ? axiom.gloss : "",
     };
   });
+}
+
+function selectedAxioms(
+  axioms: ReadonlyMap<string, ColoreAxiom>,
+  specs: readonly ProjectionSpec[],
+): ColoreAxiom[] {
+  const selected: ColoreAxiom[] = [];
+  const seen = new Set<string>();
+  for (const spec of specs) {
+    const key = axiomKey(spec.module, spec.axiomId);
+    const axiom = axioms.get(key);
+    if (axiom !== undefined && !seen.has(key)) {
+      seen.add(key);
+      selected.push(axiom);
+    }
+  }
+  return selected;
 }
 
 function axiomKey(module: string, id: string): string {
@@ -105,7 +160,18 @@ function resolveSource(source: ColoreSource | undefined): {
   readTarget: string | URL;
   sourcePath: string;
 } {
-  const selected = source ?? process.env.GOALCHAINER_COLORE_PATH ?? COLORE_ASSET;
+  const selected = source ?? process.env.GOALCHAINER_COLORE_PATH;
+  if (selected === undefined) {
+    throw new TypeError(
+      "COLORE source is required when GOALCHAINER_COLORE_PATH is not set",
+    );
+  }
+  if (!(selected instanceof URL) && typeof selected !== "string") {
+    throw new TypeError("COLORE source must be a filesystem path or file URL");
+  }
+  if (typeof selected === "string" && selected.trim() === "") {
+    throw new TypeError("COLORE source path must be nonblank");
+  }
   if (selected instanceof URL || selected.startsWith("file:")) {
     const url = selected instanceof URL ? selected : new URL(selected);
     if (url.protocol !== "file:") {
@@ -116,7 +182,12 @@ function resolveSource(source: ColoreSource | undefined): {
   return { readTarget: selected, sourcePath: selected };
 }
 
-export function loadColoreContext(source?: ColoreSource): OntologyContext {
+/** Load ontology counts and caller-declared projections from a COLORE source. */
+export function loadColoreContext(
+  source?: ColoreSource,
+  projectionSpecs: readonly ProjectionSpec[] = [],
+): OntologyContext {
+  const stableSpecs = snapshotProjectionSpecs(projectionSpecs);
   const { readTarget, sourcePath } = resolveSource(source);
   if (!existsSync(readTarget)) {
     const axioms = new Map<string, ColoreAxiom>();
@@ -129,7 +200,7 @@ export function loadColoreContext(source?: ColoreSource): OntologyContext {
       gloss_count: 0,
       axiom_kinds: {},
       selected_axioms: [],
-      projection_rules: projectionRules(axioms),
+      projection_rules: projectionRules(axioms, stableSpecs),
     };
   }
 
@@ -142,7 +213,7 @@ export function loadColoreContext(source?: ColoreSource): OntologyContext {
   const axioms = new Map<string, ColoreAxiom>();
   const glosses = new Map<string, string>();
 
-  for (const raw of text.split("\n")) {
+  for (const [lineIndex, raw] of text.split("\n").entries()) {
     const line = raw.trim();
     if (!line || line.startsWith(";")) continue;
     let m: RegExpMatchArray | null;
@@ -164,6 +235,10 @@ export function loadColoreContext(source?: ColoreSource): OntologyContext {
       };
       axiomRows.push(axiom);
       axioms.set(axiomKey(m[1]!, m[2]!), axiom);
+    } else {
+      throw new SyntaxError(
+        `unsupported COLORE adapter record at line ${lineIndex + 1}: ${line}`,
+      );
     }
   }
 
@@ -178,12 +253,6 @@ export function loadColoreContext(source?: ColoreSource): OntologyContext {
   }
   const axiomKinds = Object.fromEntries(axiomKindCounts);
 
-  const selected: ColoreAxiom[] = [];
-  for (const [mod, id] of SELECTED_AXIOM_KEYS) {
-    const a = axioms.get(axiomKey(mod, id));
-    if (a) selected.push(a);
-  }
-
   return {
     source_path: sourcePath,
     source_available: true,
@@ -192,7 +261,7 @@ export function loadColoreContext(source?: ColoreSource): OntologyContext {
     predicate_count: predicates.length,
     gloss_count: glossRows.length,
     axiom_kinds: axiomKinds,
-    selected_axioms: selected,
-    projection_rules: projectionRules(axioms),
+    selected_axioms: selectedAxioms(axioms, stableSpecs),
+    projection_rules: projectionRules(axioms, stableSpecs),
   };
 }

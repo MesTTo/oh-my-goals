@@ -1,6 +1,8 @@
 # goalchainer-ts
 
-GoalChainer ranks actions against explicit goals, policy norms, and graded evidence before an agent acts. The decision rules run on [MeTTa-TS](https://github.com/MesTTo/Meta-TypeScript-Talk). The package accepts caller-supplied structured data and has no built-in scenario or action handlers.
+GoalChainer ranks actions against explicit goals, policy norms, and graded evidence before an agent acts. The reusable decision rules are written in [MeTTa](metta/goalchainer.metta) and run on [MeTTa TS 1.1.4](https://github.com/MesTTo/MeTTa-TS). The package accepts caller-supplied structured data and has no built-in scenario or action handlers.
+
+[`metta/goalchainer.metta`](metta/goalchainer.metta) declares the semantics for norm resolution, goal analysis, the default evidence expectation formula, scoring, ranking, motivation consensus, the exported PLN and SNARS formulas, and directive state queries. TypeScript validates inputs, encodes and decodes atoms, manages files and processes, connects optional Prolog predicates, runs bounded numeric and structural grounded primitives, and dispatches caller-owned actions. The large-input primitives mirror specific goal collection, motivation projection, stable ranking, and PLN applicability steps from the bounded MeTTa paths. See [ARCHITECTURE.md](ARCHITECTURE.md) for the exact boundary and parity scope.
 
 ## Install
 
@@ -23,7 +25,9 @@ npx --no-install goalchainer --help
 
 After publication, consumers can use `npm install goalchainer-ts`.
 
-SWI-Prolog is optional. It is used only when you call the live Prolog interoperability checks.
+SWI-Prolog is optional. It is started only by `decideActionsWithProlog`,
+`verifyScorePrologParity`, `checkDirectivePrologParity`, or the `prolog-check` CLI
+command.
 
 ## Decide from JSON
 
@@ -101,7 +105,7 @@ Use `--input -` to read JSON from stdin. Unknown fields, duplicate IDs, invalid 
 
 The receipt identifies the selected action and includes the complete scenario declaration plus every ranked decision. The declaration retains goals, norms, actions, and notes so the score can be audited after a temporary input is removed. Decision scores retain full precision so threshold statuses can be replayed. `selection_tied`, `tied_actions`, and `automatic_execution_allowed` prevent an input-order tie from becoming an automatic action. The motivation audit retains the effective correlations, risks, subsystem vectors, and consensus scores. Each decision row contains its score, deontic status and reasons, satisfied goals, missing required goals, evidence projection, warnings, and provenance metadata. `forbidden` and `conflict` results are always blocked.
 
-The motivation path computes `0.54 * normalized_motivation + 0.38 * strength * confidence`, plus `0.1` for an obligation. Motivation uses min-max normalization across the candidate consensus values. Equal positive values normalize to `1`. An entirely nonpositive vector normalizes to `0` so negative consensus cannot become recommendation support. When motivation is disabled, the score is `0.42 * goal_coverage + 0.38 * strength * confidence + 0.12 * min(individual_coverage, collective_coverage)`, plus the same obligation bonus. Blocked decisions have score `-1`. Other decisions are `recommended` at score `0.72` or higher with no missing required goal, `candidate` at score `0.5` or higher, and `weak` below `0.5`.
+The motivation path computes `0.54 * normalized_motivation + 0.38 * strength * confidence`, plus `0.1` for an obligation. Motivation uses `1` and `0` subsystem membership masks for individual and collective goals. Goal weights affect coverage scoring, not the motivation consensus vectors. Consensus values use min-max normalization across the candidates. Equal values normalize to `1`. When motivation is disabled, the score is `0.42 * goal_coverage + 0.38 * strength * confidence + 0.12 * min(individual_coverage, collective_coverage)`, plus the same obligation bonus. Blocked decisions have score `-1`. Other decisions are `recommended` at score `0.72` or higher with no missing required goal, `candidate` at score `0.5` or higher, and `weak` below `0.5`.
 
 Do not put credentials, tokens, private keys, or unredacted sensitive data in the input. The receipt repeats scenario text and evidence provenance on stdout.
 
@@ -128,7 +132,7 @@ if (run.automaticExecutionAllowed && actionIsAvailable && userAlreadyAuthorizedI
 }
 ```
 
-`GoalChainer` validates unknown input at the boundary. `evaluateScenario` accepts a validated scenario and a custom evidence reasoner. `StaticEvidenceReasoner` reads explicit evidence and action defaults. `PlnEvidenceReasoner` projects beliefs from the generic PLN engine. `ContextualQueryEvidenceReasoner` passes each action's `evidenceQuery` and `evidenceAtoms` to a caller-injected synchronous adapter. Nonempty `evidenceAtoms` require a nonempty `evidenceQuery`. The `decide` CLI and `runGoalChainer` use static evidence and reject nonempty contextual declarations instead of ignoring them.
+`GoalChainer` validates unknown input at the boundary. `evaluateScenario` accepts a validated scenario and a custom evidence reasoner. `StaticEvidenceReasoner` reads explicit evidence and action defaults. `PlnEvidenceReasoner` projects beliefs from the package's selected native PLN deduction and revision relations. `ContextualQueryEvidenceReasoner` passes each action's `evidenceQuery` and `evidenceAtoms` to a caller-injected synchronous adapter. Nonempty `evidenceAtoms` require a nonempty `evidenceQuery`. The `decide` CLI and `runGoalChainer` use static evidence and reject nonempty contextual declarations instead of ignoring them.
 
 Omitted evidence uses a neutral strength of `0.5` with confidence `0`. It cannot
 produce a recommendation by itself. `executeDecision` enforces the blocked-action
@@ -140,18 +144,32 @@ arbitrary winner.
 The lower-level API also exports:
 
 - `resolveNorms` and `resolveNormsBatch` for priority-aware deontic resolution.
-- `scoreActions` and `decideActions` for the MeTTa-TS score and status rules.
+- `scoreActions` and `decideActions` for the native MeTTa score and status rules.
 - `gradeBeliefs` for PLN deduction and count-space revision.
 - `consensusDecision` for individual and collective goal reconciliation with caller-supplied correlations and risks.
 - `assess` and `derive` for SNARS subjective-logic receipts.
 - `createDirectivePlan` and `DirectiveLifecycle` for ordered task status, assignment, and instance-local atomic claims.
 - `makeProposition` and `buildHyperbasePacket` for structured propositions and Semantic-Hypergraph facts.
-- `loadColoreContext` for the packaged COLORE ontology context. An explicit source takes precedence over `GOALCHAINER_COLORE_PATH`.
+- `loadColoreContext` for a caller-supplied COLORE adapter source and caller-declared projection specifications. No ontology data or preset projections are bundled.
+- `decideActionsWithProlog`, `verifyScorePrologParity`, and `checkDirectivePrologParity` for explicit optional SWI-Prolog evaluation and comparison.
 - `redactRecord`, `detectLeaks`, and `executeDecision` for caller-owned execution boundaries.
 
-## Coding-agent skill
+`loadColoreContext` reads a strict line-oriented adapter format, not arbitrary CLIF.
+Each noncomment line must use one of these forms:
 
-The package ships one [Agent Skills](https://agentskills.io/specification) definition and materializes the same files into each tool's supported location.
+```metta
+(colore module MODULE "SOURCE")
+(colore pred MODULE PREDICATE ARITY)
+(colore axiom MODULE AXIOM_ID KIND EXPRESSION)
+(colore gloss MODULE AXIOM_ID "TEXT")
+```
+
+An unsupported record raises a syntax error with its line number. Convert a source
+ontology into these records before loading it.
+
+## Coding-agent integration
+
+The package ships one [Agent Skills](https://agentskills.io/specification) definition for Claude Code, Codex, and OpenCode. The installer copies the same canonical skill into each tool's supported location.
 
 ```bash
 npx --no-install goalchainer install-skill --agent codex --scope project
@@ -165,35 +183,38 @@ OpenCode also scans `.claude/skills`. In a project installed with `--agent all`,
 OpenCode may log a duplicate-name warning for the two identical copies. Install
 only the target you use when you want one discovery entry.
 
-The skill tells the coding agent to derive structured input from the current task, keep goals, norms, and evidence calibration attributable to the user or repository, call the JSON CLI, and stop unless automatic execution is allowed. It does not call a hosted model or read authentication state.
+The skill tells the coding agent to derive structured input from the current task, keep goals, norms, and evidence calibration attributable to the user or repository, call the JSON CLI, and stop unless automatic execution is allowed. GoalChainer does not call a hosted model or read the agent's authentication state.
 
 ## MeTTa and Prolog
 
-The deontic, scoring, motivation, PLN, SNARS, and directive rules run on `@metta-ts` 1.1.3. TypeScript handles validation, filesystem access, process I/O, and caller-owned executor dispatch.
+The framework pins `@metta-ts/core`, `@metta-ts/edsl`, `@metta-ts/hyperon`, `@metta-ts/prolog`, and the `@metta-ts/node` development CLI to 1.1.4. The packaged [`goalchainer.metta`](metta/goalchainer.metta) module declares the policy and reasoning rules. Its native paths use the MeTTa TS stdlib operations `foldl-atom`, `map-atom`, `filter-atom`, `msort`, and `is-member`. The TypeScript host registers low-level operations for large compensated vector sums and dot products, normalization, mask and correlation mapping, candidate validation, structural tree construction, Python-compatible rounding, indexed PLN matching, and stack-safe evaluator batching.
 
-The package also includes `assets/gc_score.pl` and `assets/gc_directive.pl`. Their relations are imported through `@metta-ts/prolog`, then compared with the native MeTTa-TS rules:
+MeTTa derives coverage from goal aggregates, derives every decision row, computes every motivation score and strict maximum, selects the consensus, and computes PLN deductions and revision. Grounded large-input paths mirror satisfied-goal membership and partitioning, mask and correlation mapping, stable descending-score ranking and epsilon ties, and PLN matching by action and predicate. MeTTa still decides automatic-execution eligibility. A raw-shape router returns a deferred native relation for bounded scalar-only motivation inputs and sends large, reducible, or malformed inputs to the motivation bridge. The bridge validates `[0,1]` membership masks, candidate dimensions, correlations, risks, and identities. Reducible scalar and identity terms must have exactly one normal form. A grounded kernel computes the two compensated dot products and builds a balanced pull tree. `gc-motivation-consensus-canonical` subtracts risk, applies the disagreement penalty, merges all five strict maxima, preserves declaration-order ties, and selects the consensus in MeTTa. The router and bridge do not compare scores or select winners.
+
+SWI-Prolog remains an optional interoperability path. The package imports the relations in `assets/gc_score.pl` and `assets/gc_directive.pl` through `@metta-ts/prolog`, then compares them with the corresponding MeTTa score, decision-status, and directive-state relations:
 
 ```bash
 npx --no-install goalchainer prolog-check --pretty
 ```
 
-The command starts the local `swipl` executable, runs both parity checks, disposes the bridge, and exits nonzero if a relation differs.
+The command starts the local `swipl` executable, runs both checks, disposes the bridge, and exits nonzero if a relation differs. It checks only those named relations. Prolog is not the framework's primary evaluator and the command does not claim parity for every MeTTa relation.
 
-ProbMeTTa is not bundled. Its current library targets PeTTa, which compiles MeTTa programs to SWI-Prolog, while `@metta-ts/prolog` imports named Prolog relations into MeTTa-TS. A future probabilistic evidence reasoner can implement the existing `EvidenceReasoner` contract with native MeTTa-TS rules and BDD weighted model counting. A PeTTa-backed adapter would remain optional and would need an explicit compilation boundary rather than being loaded as a MeTTa-TS library.
+ProbMeTTa is not ported or bundled. It targets PeTTa, which compiles MeTTa programs to SWI-Prolog. A caller can connect a separately managed PeTTa and ProbMeTTa process through `EvidenceReasoner` or `ContextualQueryEvidenceReasoner`, then return the resulting strength, confidence, source, and proof data. That adapter is optional and remains outside the native MeTTa TS rule module.
+
+The framework ports the reusable relations exposed by this package. Its PLN code implements the selected deduction and count-space revision formulas. Its SNARS code implements opinion construction and two-premise deduction. The deontic and motivation modules implement the static policy and consensus slices used by the decision gate. These exports are not replacements for complete chaining, deontic-logic, probabilistic-logic, or NARS systems.
 
 ## Development
 
 ```bash
 npm ci
+npx metta-ts --check metta/goalchainer.metta
 npm test
 npm run build
 npm run test:package
 ```
 
-`npm run test:package` cleans the build output, packs the npm tarball from copied live sources, installs it into an isolated consumer, and checks the public API, CLI, assets, and Agent Skill.
+`npm run test:package` cleans the build output, packs the npm tarball from copied live sources, installs it into an isolated consumer, and checks the public API, CLI, MeTTa module, Prolog assets, and Agent Skill.
 
 ## License
 
-The original package code and documentation are MIT licensed. The packaged COLORE
-ontology data is CC BY-SA 4.0. See
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and license scope.
+The package code and documentation are MIT licensed. See [LICENSE](LICENSE).

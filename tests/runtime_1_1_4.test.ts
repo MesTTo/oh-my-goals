@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { flt, mabs, mettaDB, mmin } from "../src/engine.js";
+import { round6 } from "../src/models.js";
 import {
   decideActions,
   scoreActions,
@@ -15,7 +15,7 @@ import { assess, derive } from "../src/snars.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
-describe("@metta-ts 1.1.3 runtime migration", () => {
+describe("@metta-ts 1.1.4 runtime", () => {
   it("pins the runtime and validation packages exactly", () => {
     const manifest = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf-8")) as {
       dependencies: Record<string, string>;
@@ -26,10 +26,10 @@ describe("@metta-ts 1.1.3 runtime migration", () => {
     };
 
     const expected = {
-      "@metta-ts/core": "1.1.3",
-      "@metta-ts/edsl": "1.1.3",
-      "@metta-ts/hyperon": "1.1.3",
-      "@metta-ts/prolog": "1.1.3",
+      "@metta-ts/core": "1.1.4",
+      "@metta-ts/edsl": "1.1.4",
+      "@metta-ts/hyperon": "1.1.4",
+      "@metta-ts/prolog": "1.1.4",
       zod: "4.4.3",
     };
     expect(manifest.dependencies).toMatchObject(expected);
@@ -37,45 +37,15 @@ describe("@metta-ts 1.1.3 runtime migration", () => {
       expect(lock.packages[`node_modules/${name}`]?.version).toBe(version);
     }
 
-    const testStack = { vite: "6.4.3", vitest: "4.1.10" };
+    const testStack = {
+      "@metta-ts/node": "1.1.4",
+      vite: "6.4.3",
+      vitest: "4.1.10",
+    };
     expect(manifest.devDependencies).toMatchObject(testStack);
     for (const [name, version] of Object.entries(testStack)) {
       expect(lock.packages[`node_modules/${name}`]?.version).toBe(version);
     }
-  });
-
-  it("preserves conditional numeric helpers", () => {
-    const db = mettaDB();
-    expect(db.evalJs(mmin(2, 3))).toEqual([2]);
-    expect(db.evalJs(mmin(3, 2))).toEqual([2]);
-    expect(db.evalJs(mabs(-2.5))).toEqual([2.5]);
-    expect(db.evalJs(mabs(2.5))).toEqual([2.5]);
-    expect(() => flt(Number.NaN)).toThrow("float atom value must be a finite number");
-    expect(() => flt("1" as any)).toThrow("float atom value must be a finite number");
-  });
-
-  it("preserves the score formula across a deterministic input grid", () => {
-    const statuses = ["forbidden", "conflict", "obligated", "permitted", "unregulated"] as const;
-    const values = [0, 0.05, 0.5, 0.934, 1] as const;
-    const rows: ScoreActionRow[] = [];
-    for (const status of statuses) {
-      for (const strength of values) {
-        for (const confidence of values) {
-          for (const motivation of values) rows.push([status, strength, confidence, motivation]);
-        }
-      }
-    }
-
-    const scores = scoreActions(rows);
-    expect(scores).toHaveLength(rows.length);
-    scores.forEach((score, index) => {
-      const [status, strength, confidence, motivation] = rows[index]!;
-      const expected =
-        status === "forbidden" || status === "conflict"
-          ? -1
-          : 0.54 * motivation + 0.38 * (strength * confidence) + (status === "obligated" ? 0.1 : 0);
-      expect(score).toBeCloseTo(expected, 15);
-    });
   });
 
   it("preserves native status selection", () => {
@@ -90,6 +60,40 @@ describe("@metta-ts 1.1.3 runtime migration", () => {
       [0.49800000000000005, "weak"],
       [-1, "blocked"],
     ]);
+  });
+
+  it("preserves the score formula across a deterministic input grid", () => {
+    const statuses = [
+      "forbidden",
+      "conflict",
+      "obligated",
+      "permitted",
+      "unregulated",
+    ] as const;
+    const values = [0, 0.05, 0.5, 0.934, 1] as const;
+    const rows: ScoreActionRow[] = [];
+    for (const status of statuses) {
+      for (const strength of values) {
+        for (const confidence of values) {
+          for (const motivation of values) {
+            rows.push([status, strength, confidence, motivation]);
+          }
+        }
+      }
+    }
+
+    const scores = scoreActions(rows);
+    expect(scores).toHaveLength(rows.length);
+    scores.forEach((score, index) => {
+      const [status, strength, confidence, motivation] = rows[index]!;
+      const expected =
+        status === "forbidden" || status === "conflict"
+          ? -1
+          : 0.54 * motivation +
+            0.38 * strength * confidence +
+            (status === "obligated" ? 0.1 : 0);
+      expect(score).toBeCloseTo(expected, 15);
+    });
   });
 
   it("rejects invalid public score rows before evaluation", () => {
@@ -113,7 +117,7 @@ describe("@metta-ts 1.1.3 runtime migration", () => {
   it("preserves SNARS matching and opinion arithmetic", () => {
     expect(assess("storage_write", "violates", "retention_policy", "assertion")).toEqual({
       claim: "storage_write violates retention_policy",
-      engine: "SNARS (Subjective-Logic NARS) on @metta-ts",
+      engine: "GoalChainer SNARS assessment in MeTTa TS",
       opinion: { b: 0.818182, d: 0, u: 0.181818, a: 0.5 },
       expectation: 0.909091,
       why:
@@ -170,5 +174,24 @@ describe("@metta-ts 1.1.3 runtime migration", () => {
       "source one",
       "source two",
     ]);
+  });
+
+  it("derives SNARS expectations from the rounded public opinion", () => {
+    let state = 0x9e3779b9;
+    const random = (): number => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 0x1_0000_0000;
+    };
+
+    for (let index = 0; index < 128; index += 1) {
+      const result = assess("subject", "relation", "object", "source", {
+        positive: random() * 100,
+        negative: random() * 100,
+        baseRate: random(),
+      });
+      expect(result.expectation).toBe(
+        round6(result.opinion.b + result.opinion.a * result.opinion.u),
+      );
+    }
   });
 });

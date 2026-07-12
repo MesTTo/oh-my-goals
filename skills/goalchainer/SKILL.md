@@ -1,11 +1,13 @@
 ---
 name: goalchainer
-description: Rank competing agent actions against caller-supplied goals, deontic norms, and graded evidence with GoalChainer on MeTTa-TS. Use when a coding task has multiple viable actions, required goals, individual versus collective interests, policy constraints, safety or privacy restrictions, or a consequential choice that needs a machine-readable decision receipt before execution.
+description: Rank competing agent actions against caller-supplied goals, deontic norms, and graded evidence with GoalChainer on MeTTa TS. Use when a coding task has multiple viable actions, required goals, individual versus collective interests, policy constraints, safety or privacy restrictions, or a consequential choice that needs a machine-readable decision receipt before execution.
 ---
 
 # GoalChainer
 
 Use GoalChainer as a decision gate before taking the selected action. Keep all facts and policy choices traceable to the user, repository, or tool output.
+
+The installed CLI evaluates `metta/goalchainer.metta` on MeTTa TS 1.1.4. The module declares the rules for norms, goal coverage, omitted evidence expectations, scores, statuses, ranking, ties, motivation consensus, and automatic-execution eligibility. Large inputs use bounded grounded numeric and structural operations. Those operations mirror goal membership and partitioning, mask and correlation mapping, stable ranking and tie selection, and PLN applicability matching from the bounded MeTTa paths. TypeScript validates the input, encodes atoms, supplies those grounded operations, handles files and processes, decodes the receipt, and dispatches only caller-owned actions. The CLI does not ask Claude Code, Codex, or OpenCode to choose the result, and it does not read their authentication state.
 
 ## Evaluate a choice
 

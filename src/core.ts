@@ -2,7 +2,7 @@
 
 import { isDeepStrictEqual } from "node:util";
 
-import { NORM_STATUSES, resolveNorms, type NormStatus } from "./deontic.js";
+import { NORM_STATUSES, type NormStatus } from "./deontic.js";
 import { parseGoalChainerInput, type GoalChainerInput } from "./input.js";
 import {
   consensusDecision,
@@ -17,8 +17,6 @@ import {
   createEvidenceProjection,
   createGoalScenario,
   decisionToDict,
-  deriveDecisionStatus,
-  SCORE_EQUIVALENCE_EPSILON,
   type Decision,
   type EvidenceProjection,
   type GoalScenario,
@@ -26,18 +24,10 @@ import {
 import { StaticEvidenceReasoner } from "./reasoner.js";
 import {
   DecisionEngine,
-  goalCoverage,
-  mergeNormStatus,
-  missingRequiredGoals,
-  normalizeFiniteMotivation,
+  snapshotEvidenceReasoner,
   type EvidenceReasoner,
 } from "./score.js";
-import {
-  assertDenseArray,
-  assertKnownKeys,
-  assertPlainRecord,
-  ownValue,
-} from "./records.js";
+import { assertDenseArray, assertKnownKeys, assertPlainRecord, ownValue } from "./records.js";
 
 export interface GoalChainerOptions {
   /** Disable motivation consensus or override correlations and risks. */
@@ -55,6 +45,14 @@ export interface GoalChainerRun {
 }
 
 export class ContextualEvidenceRequiresReasonerError extends TypeError {}
+
+const VALID_RUNS = new WeakSet<object>();
+
+function trustRun(run: GoalChainerRun): GoalChainerRun {
+  const frozen = Object.freeze(run);
+  VALID_RUNS.add(frozen);
+  return frozen;
+}
 
 function validatedOptions(options: GoalChainerOptions): GoalChainerOptions {
   assertPlainRecord(options, "GoalChainer options");
@@ -94,11 +92,74 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function sameDecision(left: Decision, right: Decision): boolean {
-  return isDeepStrictEqual(decisionToDict(left), decisionToDict(right));
+function validateMotivationScenario(
+  scenario: GoalScenario,
+  motivation: MotivationResult | null,
+): void {
+  if (motivation === null) return;
+  if (motivation.engine !== MOTIVATION_ENGINE) {
+    throw new RangeError(`GoalChainer run motivation engine must be ${MOTIVATION_ENGINE}`);
+  }
+  const expectedIndividual = scenario.goals.map((goal) =>
+    goal.kind === "individual" ? 1 : 0,
+  );
+  const expectedCollective = scenario.goals.map((goal) =>
+    goal.kind === "collective" ? 1 : 0,
+  );
+  if (
+    !sameStrings(
+      motivation.candidates.map((candidate) => candidate.id),
+      scenario.actions.map((action) => action.id),
+    ) ||
+    !isDeepStrictEqual(motivation.individual_goals, expectedIndividual) ||
+    !isDeepStrictEqual(motivation.collective_goals, expectedCollective)
+  ) {
+    throw new RangeError("GoalChainer run motivation does not match the scenario declaration");
+  }
+}
+
+function suppliedReasoner(
+  scenario: GoalScenario,
+  decisions: readonly Decision[],
+): EvidenceReasoner {
+  const projections = new Map<string, EvidenceProjection>();
+  let source: string | undefined;
+  decisions.forEach((decision) => {
+    const reasonerSource = ownValue(decision.metadata, "reasoner_source");
+    const reasonerStatus = ownValue(decision.metadata, "reasoner_deontic");
+    if (typeof reasonerSource !== "string" || reasonerSource.trim() === "") {
+      throw new RangeError(`GoalChainer run has invalid reasoner source: ${decision.actionId}`);
+    }
+    if (
+      typeof reasonerStatus !== "string" ||
+      !NORM_STATUSES.includes(reasonerStatus as NormStatus)
+    ) {
+      throw new RangeError(`GoalChainer run has invalid reasoner deontic metadata: ${decision.actionId}`);
+    }
+    if (source !== undefined && source !== reasonerSource) {
+      throw new RangeError("GoalChainer run decisions disagree on the reasoner source");
+    }
+    source = reasonerSource;
+    projections.set(decision.actionId, createEvidenceProjection({
+      ...decision.evidence,
+      deontic: reasonerStatus as NormStatus,
+    }));
+  });
+  if (source === undefined) throw new RangeError("GoalChainer run contains no reasoner source");
+  return {
+    source,
+    project(action) {
+      const projection = projections.get(action.id);
+      if (projection === undefined) {
+        throw new RangeError(`GoalChainer run has no evidence for action: ${action.id}`);
+      }
+      return projection;
+    },
+  };
 }
 
 function validatedRun(run: GoalChainerRun): GoalChainerRun {
+  if (run !== null && typeof run === "object" && VALID_RUNS.has(run)) return run;
   assertPlainRecord(run, "GoalChainer run");
   assertKnownKeys(run, "GoalChainer run", [
     "scenario",
@@ -111,206 +172,62 @@ function validatedRun(run: GoalChainerRun): GoalChainerRun {
   ]);
   const scenario = createGoalScenario(run.scenario);
   const motivation = run.motivation === null ? null : createMotivationResult(run.motivation);
-  let normalizedMotivation: Readonly<Record<string, number>> | null = null;
-  if (motivation !== null) {
-    if (motivation.engine !== MOTIVATION_ENGINE) {
-      throw new RangeError(`GoalChainer run motivation engine must be ${MOTIVATION_ENGINE}`);
-    }
-    const expectedIndividual = scenario.goals.map((goal) =>
-      goal.kind === "individual" ? goal.weight : 0,
-    );
-    const expectedCollective = scenario.goals.map((goal) =>
-      goal.kind === "collective" ? goal.weight : 0,
-    );
-    if (
-      motivation.individual_goals.length !== scenario.goals.length ||
-      motivation.collective_goals.length !== scenario.goals.length ||
-      !motivation.individual_goals.every((value, index) => value === expectedIndividual[index]) ||
-      !motivation.collective_goals.every((value, index) => value === expectedCollective[index]) ||
-      !sameStrings(
-        motivation.candidates.map((candidate) => candidate.id),
-        scenario.actions.map((action) => action.id),
-      )
-    ) {
-      throw new RangeError("GoalChainer run motivation does not match the scenario declaration");
-    }
-    const normalized = normalizeFiniteMotivation(
-      scenario.actions.map((action) => motivation.consensus_scores[action.id]!),
-    );
-    normalizedMotivation = Object.freeze(Object.fromEntries(
-      scenario.actions.map((action, index) => [action.id, normalized[index]!]),
-    ));
-  }
+  validateMotivationScenario(scenario, motivation);
   assertDenseArray(run.decisions, "GoalChainer run decisions");
-  const suppliedDecisions = Object.freeze(
-    run.decisions.map((decision) => createDecision(decision)),
-  );
+  const suppliedDecisions = Object.freeze(run.decisions.map((decision) => createDecision(decision)));
   if (suppliedDecisions.length !== scenario.actions.length) {
     throw new RangeError("GoalChainer run must contain one decision per declared action");
   }
-  const actionById = new Map(scenario.actions.map((action) => [action.id, action]));
   const decisionIds = new Set<string>();
-  const canonicalByAction = new Map<string, Decision>();
   suppliedDecisions.forEach((decision) => {
     if (decisionIds.has(decision.actionId)) {
       throw new RangeError(`duplicate GoalChainer run decision: ${decision.actionId}`);
     }
     decisionIds.add(decision.actionId);
-    const action = actionById.get(decision.actionId);
-    if (action === undefined) {
-      throw new RangeError(`GoalChainer run decision references unknown action: ${decision.actionId}`);
-    }
-    if (decision.label !== action.label) {
-      throw new RangeError(`GoalChainer run decision label disagrees for action: ${action.id}`);
-    }
-    if (!sameStrings(decision.satisfiedGoals, action.satisfies)) {
-      throw new RangeError(`GoalChainer run satisfied goals disagree for action: ${action.id}`);
-    }
-    const expectedMissing = missingRequiredGoals(scenario.goals, action.satisfies);
-    if (!sameStrings(decision.missingRequiredGoals, expectedMissing)) {
-      throw new RangeError(`GoalChainer run missing required goals disagree for action: ${action.id}`);
-    }
-    const expectedCoverage = goalCoverage(scenario.goals, action.satisfies);
-    if (
-      decision.goalScore !== expectedCoverage.all ||
-      decision.individualScore !== expectedCoverage.individual ||
-      decision.collectiveScore !== expectedCoverage.collective
-    ) {
-      throw new RangeError(`GoalChainer run goal coverage disagrees for action: ${action.id}`);
-    }
-    const staticNorm = resolveNorms(action.id, scenario.norms);
-    const reasonerStatus = ownValue(decision.metadata, "reasoner_deontic");
-    if (
-      typeof reasonerStatus !== "string" ||
-      !NORM_STATUSES.includes(reasonerStatus as NormStatus)
-    ) {
-      throw new RangeError(`GoalChainer run has invalid reasoner deontic metadata: ${action.id}`);
-    }
-    const expectedNormStatus = mergeNormStatus(
-      staticNorm.status,
-      reasonerStatus as NormStatus,
-    );
-    if (decision.normStatus !== expectedNormStatus) {
-      throw new RangeError(`GoalChainer run norm status disagrees for action: ${action.id}`);
-    }
-    const expectedReasons = [
-      ...staticNorm.reasons,
-      ...(reasonerStatus === "unregulated" ? [] : [`reasoner:${reasonerStatus}`]),
-    ];
-    if (!sameStrings(decision.normReasons, expectedReasons)) {
-      throw new RangeError(`GoalChainer run norm reasons disagree for action: ${action.id}`);
-    }
-    const expectedWarnings = [
-      ...(expectedMissing.length > 0
-        ? [`missing required goals: ${expectedMissing.join(", ")}`]
-        : []),
-      ...(expectedNormStatus === "forbidden" || expectedNormStatus === "conflict"
-        ? [`deontic status: ${expectedNormStatus}`]
-        : []),
-    ];
-    if (!sameStrings(decision.warnings, expectedWarnings)) {
-      throw new RangeError(`GoalChainer run warnings disagree for action: ${action.id}`);
-    }
-    const motivationScore = normalizedMotivation?.[action.id];
-    const blocked = expectedNormStatus === "forbidden" || expectedNormStatus === "conflict";
-    const bonus = expectedNormStatus === "obligated" ? 0.1 : 0;
-    const expectedScore = blocked
-      ? -1
-      : motivationScore === undefined
-        ? 0.42 * expectedCoverage.all +
-          0.38 * (decision.evidence.strength * decision.evidence.confidence) +
-          0.12 * Math.min(expectedCoverage.individual, expectedCoverage.collective) +
-          bonus
-        : 0.54 * motivationScore +
-          0.38 * (decision.evidence.strength * decision.evidence.confidence) +
-          bonus;
-    if (Math.abs(decision.score - expectedScore) > SCORE_EQUIVALENCE_EPSILON) {
-      throw new RangeError(`GoalChainer run score disagrees for action: ${action.id}`);
-    }
-    const expectedStatus = deriveDecisionStatus(
-      expectedScore,
-      expectedMissing.length,
-      expectedNormStatus,
-    );
-    if (decision.status !== expectedStatus) {
-      throw new RangeError(`GoalChainer run status disagrees for action: ${action.id}`);
-    }
-    const expectedMetadata = {
-      deontic_expectation: decision.evidence.expectation.toFixed(6),
-      norm_priority: String(staticNorm.priority),
-      evidence_source: decision.evidence.source,
-      reasoner_source: ownValue(decision.metadata, "reasoner_source"),
-      reasoner_deontic: reasonerStatus,
-      ...(motivationScore === undefined
-        ? {}
-        : { motivation: motivationScore.toFixed(4), score_engine: "metta-ts" }),
-    };
-    if (
-      typeof ownValue(decision.metadata, "reasoner_source") !== "string" ||
-      ownValue(decision.metadata, "reasoner_source")!.trim() === "" ||
-      !isDeepStrictEqual(decision.metadata, expectedMetadata)
-    ) {
-      throw new RangeError(`GoalChainer run metadata disagrees for action: ${action.id}`);
-    }
-    canonicalByAction.set(action.id, createDecision({
-      ...decision,
-      score: expectedScore,
-      status: expectedStatus,
-    }));
   });
-  const decisions = Object.freeze(
-    scenario.actions
-      .map((action) => canonicalByAction.get(action.id)!)
-      .sort((left, right) => right.score - left.score),
-  );
+  const reasoner = suppliedReasoner(scenario, suppliedDecisions);
+  const canonical = new DecisionEngine(
+    reasoner,
+    motivation?.consensus_scores ?? {},
+  ).rankWithReceipt(scenario);
   if (
-    !sameStrings(
-      suppliedDecisions.map((decision) => decision.actionId),
-      decisions.map((decision) => decision.actionId),
+    suppliedDecisions.length !== canonical.decisions.length ||
+    suppliedDecisions.some(
+      (decision, index) => !isDeepStrictEqual(decision, canonical.decisions[index]),
     )
   ) {
-    throw new RangeError("GoalChainer run decisions must use the canonical score ranking");
+    throw new RangeError("GoalChainer run decisions disagree with goalchainer.metta");
   }
   const suppliedSelected = createDecision(run.selected);
-  if (!sameDecision(suppliedSelected, suppliedDecisions[0]!)) {
+  if (!isDeepStrictEqual(suppliedSelected, canonical.decisions[0])) {
     throw new RangeError("GoalChainer run selected decision must equal the first ranked decision");
   }
-  const selected = decisions[0]!;
   assertDenseArray(run.tiedActionIds, "GoalChainer run tied action IDs");
   run.tiedActionIds.forEach((actionId, index) => {
     if (typeof actionId !== "string") {
       throw new TypeError(`GoalChainer run tied action IDs[${index}] must be a string`);
     }
   });
-  const tiedActionIds = Object.freeze(
-    decisions
-      .filter(
-        (decision) =>
-          Math.abs(decision.score - selected.score) <= SCORE_EQUIVALENCE_EPSILON,
-      )
-      .map((decision) => decision.actionId),
-  );
-  if (!sameStrings(run.tiedActionIds, tiedActionIds)) {
-    throw new RangeError("GoalChainer run tied action IDs disagree with the ranked decisions");
+  if (!sameStrings(run.tiedActionIds, canonical.tiedActionIds)) {
+    throw new RangeError("GoalChainer run tied action IDs disagree with goalchainer.metta");
   }
-  const selectionTied = tiedActionIds.length > 1;
+  const selectionTied = canonical.tiedActionIds.length > 1;
   if (run.selectionTied !== selectionTied) {
-    throw new RangeError("GoalChainer run selectionTied disagrees with the ranked decisions");
+    throw new RangeError("GoalChainer run selectionTied disagrees with goalchainer.metta");
   }
-  const automaticExecutionAllowed = selected.status === "recommended" && !selectionTied;
-  if (run.automaticExecutionAllowed !== automaticExecutionAllowed) {
+  if (run.automaticExecutionAllowed !== canonical.automaticExecutionAllowed) {
     throw new RangeError(
-      "GoalChainer run automaticExecutionAllowed disagrees with the selected decision",
+      "GoalChainer run automaticExecutionAllowed disagrees with goalchainer.metta",
     );
   }
-  return Object.freeze({
+  return trustRun({
     scenario,
     motivation,
-    decisions,
-    selected: decisions[0]!,
-    tiedActionIds,
+    decisions: canonical.decisions,
+    selected: canonical.decisions[0]!,
+    tiedActionIds: canonical.tiedActionIds,
     selectionTied,
-    automaticExecutionAllowed,
+    automaticExecutionAllowed: canonical.automaticExecutionAllowed,
   });
 }
 
@@ -322,12 +239,13 @@ export function evaluateScenario(
 ): GoalChainerRun {
   const stableOptions = validatedOptions(options);
   const validatedScenario = createGoalScenario(scenario);
+  const stableReasoner = snapshotEvidenceReasoner(reasoner);
   const projections = new Map<string, EvidenceProjection>();
   for (const action of validatedScenario.actions) {
-    projections.set(action.id, createEvidenceProjection(reasoner.project(action)));
+    projections.set(action.id, createEvidenceProjection(stableReasoner.project(action)));
   }
   const cachedReasoner: EvidenceReasoner = {
-    source: reasoner.source,
+    source: stableReasoner.source,
     project(action) {
       const projected = projections.get(action.id);
       if (projected === undefined) {
@@ -339,35 +257,23 @@ export function evaluateScenario(
   const strengthByAction = Object.fromEntries(
     validatedScenario.actions.map((action) => [action.id, projections.get(action.id)!.strength]),
   );
-  const motivation =
-    stableOptions.motivation === false
-      ? null
-      : consensusDecision(validatedScenario, strengthByAction, stableOptions.motivation ?? {});
-  const decisions = Object.freeze(new DecisionEngine(
+  const motivation = stableOptions.motivation === false
+    ? null
+    : consensusDecision(validatedScenario, strengthByAction, stableOptions.motivation ?? {});
+  const ranking = new DecisionEngine(
     cachedReasoner,
     motivation?.consensus_scores ?? {},
-  ).rank(validatedScenario));
-  const selected = decisions[0];
-  if (selected === undefined) {
-    throw new Error("GoalChainer produced no decision");
-  }
-  const tiedActionIds = Object.freeze(
-    decisions
-      .filter(
-        (decision) =>
-          Math.abs(decision.score - selected.score) <= SCORE_EQUIVALENCE_EPSILON,
-      )
-      .map((decision) => decision.actionId),
-  );
-  const selectionTied = tiedActionIds.length > 1;
-  return validatedRun({
+  ).rankWithReceipt(validatedScenario);
+  const selected = ranking.decisions[0];
+  if (selected === undefined) throw new Error("GoalChainer produced no decision");
+  return trustRun({
     scenario: validatedScenario,
     motivation,
-    decisions,
+    decisions: ranking.decisions,
     selected,
-    tiedActionIds,
-    selectionTied,
-    automaticExecutionAllowed: selected.status === "recommended" && !selectionTied,
+    tiedActionIds: ranking.tiedActionIds,
+    selectionTied: ranking.tiedActionIds.length > 1,
+    automaticExecutionAllowed: ranking.automaticExecutionAllowed,
   });
 }
 
@@ -432,23 +338,22 @@ export function goalChainerRunToJson(run: GoalChainerRun): Record<string, unknow
     automatic_execution_allowed: validated.automaticExecutionAllowed,
     decisions: validated.decisions.map(decisionToDict),
     motivation: validated.motivation === null ? null : motivationSummary(validated.motivation),
-    motivation_audit:
-      validated.motivation === null
-        ? null
-        : {
-            engine: validated.motivation.engine,
-            individual_goals: [...validated.motivation.individual_goals],
-            collective_goals: [...validated.motivation.collective_goals],
-            candidates: validated.motivation.candidates.map((candidate) => ({
-              id: candidate.id,
-              corr: [...candidate.corr],
-              risk: candidate.risk,
-            })),
-            goal_pull: { ...validated.motivation.goal_pull },
-            subsystem_preference: { ...validated.motivation.subsystem_preference },
-            consensus_scores: { ...validated.motivation.consensus_scores },
-            consensus: validated.motivation.consensus,
-          },
+    motivation_audit: validated.motivation === null
+      ? null
+      : {
+          engine: validated.motivation.engine,
+          individual_goals: [...validated.motivation.individual_goals],
+          collective_goals: [...validated.motivation.collective_goals],
+          candidates: validated.motivation.candidates.map((candidate) => ({
+            id: candidate.id,
+            corr: [...candidate.corr],
+            risk: candidate.risk,
+          })),
+          goal_pull: { ...validated.motivation.goal_pull },
+          subsystem_preference: { ...validated.motivation.subsystem_preference },
+          consensus_scores: { ...validated.motivation.consensus_scores },
+          consensus: validated.motivation.consensus,
+        },
   };
 }
 

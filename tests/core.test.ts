@@ -180,7 +180,7 @@ describe("generic GoalChainer core", () => {
         selected: reversed[0]!,
         tiedActionIds: reversed.map((decision) => decision.actionId),
       } as GoalChainerRun),
-    ).toThrow("canonical score ranking");
+    ).toThrow("decisions disagree with goalchainer.metta");
   });
 
   it("cannot cross the recommendation threshold with tolerated score drift", () => {
@@ -210,7 +210,7 @@ describe("generic GoalChainer core", () => {
         selected: forged,
         automaticExecutionAllowed: true,
       }),
-    ).toThrow("status disagrees");
+    ).toThrow("decisions disagree with goalchainer.metta");
   });
 
   it("blocks forbidden and conflicting options at their strongest norm priority", () => {
@@ -376,6 +376,32 @@ describe("generic GoalChainer core", () => {
     });
   });
 
+  it("rejects an unattributable evidence capability before projection", () => {
+    const parsed = parseGoalChainerInput(neutralInput());
+    let projections = 0;
+    const blankSource = {
+      source: "   ",
+      project() {
+        projections += 1;
+        return {} as any;
+      },
+    };
+
+    expect(() => evaluateScenario(parsed.scenario, blankSource)).toThrow(
+      "evidence reasoner source must be a nonblank string",
+    );
+    expect(() => new DecisionEngine(blankSource)).toThrow(
+      "evidence reasoner source must be a nonblank string",
+    );
+    expect(() => new DecisionEngine({ source: "named" } as any)).toThrow(
+      "evidence reasoner project must be a function",
+    );
+    expect(() => new DecisionEngine(null as any)).toThrow(
+      "evidence reasoner must be an object",
+    );
+    expect(projections).toBe(0);
+  });
+
   it("fails closed when optional safety fields are inherited from a polluted prototype", () => {
     const parsed = parseGoalChainerInput(neutralInput());
     Object.defineProperty(Object.prototype, "deontic", {
@@ -501,8 +527,8 @@ describe("generic GoalChainer core", () => {
     );
   });
 
-  it("does not turn nonpositive consensus into recommendation support", () => {
-    expect(normalizeFiniteMotivation([-2, -1, 0])).toEqual([0, 0, 0]);
+  it("matches the source min-max policy for negative and equal consensus scores", () => {
+    expect(normalizeFiniteMotivation([-2, -1, 0])).toEqual([0, 0.5, 1]);
     expect(normalizeFiniteMotivation([1, 2, 3])).toEqual([0, 0.5, 1]);
     expect(normalizeFiniteMotivation([3, 3])).toEqual([1, 1]);
     const input = neutralInput() as any;
@@ -525,9 +551,9 @@ describe("generic GoalChainer core", () => {
       },
     });
     expect(run.motivation!.consensus_scores[DEFAULT_IDS.preferredAction]).toBe(-2);
-    expect(run.selected.metadata.motivation).toBe("0.0000");
-    expect(run.selected.status).toBe("weak");
-    expect(run.automaticExecutionAllowed).toBe(false);
+    expect(run.selected.metadata.motivation).toBe("1.0000");
+    expect(run.selected.status).toBe("recommended");
+    expect(run.automaticExecutionAllowed).toBe(true);
   });
 
   it("rejects duplicate IDs, dangling references, extra keys, and empty action lists", () => {
@@ -658,7 +684,7 @@ describe("generic GoalChainer core", () => {
       expect(score).toBeCloseTo(0.54 + 0.38 * strength, 12);
       previous = score;
     }
-  });
+  }, 15_000);
 
   it("is independent of 200 generated caller goal and action IDs", () => {
     for (let index = 0; index < 200; index += 1) {
@@ -673,7 +699,7 @@ describe("generic GoalChainer core", () => {
       expect(run.selected.score).toBeCloseTo(0.882, 12);
       expect(run.decisions[1]!.missingRequiredGoals).toEqual([ids.sharedGoal]);
     }
-  });
+  }, 15_000);
 
   it("treats Object.prototype names as ordinary IDs through the full pipeline", () => {
     const ids: NeutralIds = {

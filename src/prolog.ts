@@ -3,15 +3,15 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { names } from "@metta-ts/edsl";
 import { importPrologFunctionsFromFile } from "@metta-ts/edsl/prolog";
+import { atomToJs, MeTTa } from "@metta-ts/hyperon";
 import {
   decideActions,
   validateDecideActionRows,
   type DecideActionRow,
   type NativeDecision,
 } from "./native_score.js";
-import { mettaDB } from "./engine.js";
+import { mettaCall, mettaFloat, mettaSymbol } from "./metta.js";
 import { resolvePrologExecutable } from "./prolog_runtime.js";
 import { assertKnownKeys, assertPlainRecord } from "./records.js";
 
@@ -70,25 +70,32 @@ export async function decideActionsWithProlog(
     import("@metta-ts/prolog/swi-node"),
   ]);
   const bridge = swiPrologBridge({ executable });
-  const p = names<"gc_score" | "gc_decision_status">();
-  const statusNames = names();
   try {
-    const db = mettaDB();
-    registerPrologInterop(db.metta, bridge);
-    const imported = await db.evalJsAsync(
-      importPrologFunctionsFromFile(stableOptions.programPath, [
-        "gc_score",
-        "gc_decision_status",
-      ]),
-    );
+    const metta = new MeTTa();
+    registerPrologInterop(metta, bridge);
+    const evalJs = async (query: ReturnType<typeof mettaCall>): Promise<unknown[]> =>
+      (await metta.evaluateAtomAsync(query)).map(atomToJs);
+    const imported = (
+      await metta.evaluateAtomAsync(
+        importPrologFunctionsFromFile(stableOptions.programPath, [
+          "gc_score",
+          "gc_decision_status",
+        ]),
+      )
+    ).map(atomToJs);
     if (imported[0] !== "True") {
       throw new Error(`failed to import Prolog score functions: ${JSON.stringify(imported)}`);
     }
     const results: NativeDecision[] = [];
     for (const row of stableRows) {
-      const deontic = statusNames[row[0]]!;
-      const scoreResults = await db.evalJsAsync(
-        p.gc_score(deontic, row[1], row[2], row[3]),
+      const scoreResults = await evalJs(
+        mettaCall(
+          "gc_score",
+          mettaSymbol(row[0]),
+          mettaFloat(row[1]),
+          mettaFloat(row[2]),
+          mettaFloat(row[3]),
+        ),
       );
       if (scoreResults.length !== 1) {
         throw new Error(
@@ -99,8 +106,13 @@ export async function decideActionsWithProlog(
       if (typeof score !== "number" || !Number.isFinite(score)) {
         throw new Error(`Prolog returned invalid score: ${JSON.stringify(score)}`);
       }
-      const statusResults = await db.evalJsAsync(
-        p.gc_decision_status(deontic, score, row[4]),
+      const statusResults = await evalJs(
+        mettaCall(
+          "gc_decision_status",
+          mettaSymbol(row[0]),
+          mettaFloat(score),
+          row[4],
+        ),
       );
       if (statusResults.length !== 1) {
         throw new Error(

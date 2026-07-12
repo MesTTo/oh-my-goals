@@ -1,19 +1,13 @@
-// PLN truth-value deduction and revision on @metta-ts.
+// GoalChainer PLN deduction and revision through goalchainer.metta.
 
 import {
-  If,
-  Match,
-  add,
-  div,
-  e,
-  eq,
-  mul,
-  names,
-  sub,
-  vars,
+  mettaCall,
+  mettaFloat,
+  mettaString,
+  mettaTuple,
+  sharedGoalChainerMetta,
   type Term,
-} from "@metta-ts/edsl";
-import { addTerms, mettaDB, mmin } from "./engine.js";
+} from "./metta.js";
 import {
   assertDenseArray,
   assertKnownKeys,
@@ -56,44 +50,12 @@ export interface PlnResult {
   readonly proofOutputs: readonly string[];
 }
 
-const n = names<"pln-rule" | "pln-fact" | "pln-deduction">();
-const ruleAtom = n["pln-rule"];
-const factAtom = n["pln-fact"];
-const deduction = n["pln-deduction"];
-
-const deducedStrength = (ruleStrength: Term, factStrength: Term): Term =>
-  add(mul(ruleStrength, factStrength), mul(0.2, sub(1, factStrength)));
-const deducedConfidence = (
-  ruleConfidence: Term,
-  factConfidence: Term,
-  factStrength: Term,
-): Term =>
-  add(
-    mul(factStrength, mmin(ruleConfidence, factConfidence)),
-    mul(sub(1, factStrength), mmin(0.2, factConfidence)),
-  );
-const confidenceToWeight = (confidence: Term): Term =>
-  div(mul(confidence, 800), sub(1, mmin(confidence, 0.9999)));
-const revisedStrength = (
-  strength1: Term,
-  confidence1: Term,
-  strength2: Term,
-  confidence2: Term,
-): Term => {
-  const weight1 = confidenceToWeight(confidence1);
-  const weight2 = confidenceToWeight(confidence2);
-  const totalWeight = add(weight1, weight2);
-  return If(
-    eq(totalWeight, 0),
-    0.5,
-    div(add(mul(strength1, weight1), mul(strength2, weight2)), totalWeight),
-  );
-};
-const revisedConfidence = (confidence1: Term, confidence2: Term): Term =>
-  div(
-    add(confidenceToWeight(confidence1), confidenceToWeight(confidence2)),
-    add(add(confidenceToWeight(confidence1), confidenceToWeight(confidence2)), 800),
-  );
+interface NativeDeduction {
+  readonly ruleId: string;
+  readonly factId: string;
+  readonly strength: number;
+  readonly confidence: number;
+}
 
 function uniqueIds(values: readonly string[], path: string): void {
   assertDenseArray(values, path);
@@ -168,154 +130,166 @@ function snapshotProgram(input: PlnProgram): PlnProgram {
   return Object.freeze({ actionIds, rules, facts });
 }
 
-type DeductionRow = [number, number, string, string, number, number];
+function ruleTerm(rule: PlnRule): Term {
+  return mettaCall(
+    "PlnRule",
+    mettaString(rule.id),
+    mettaString(rule.predicate),
+    mettaFloat(rule.strength),
+    mettaFloat(rule.confidence),
+  );
+}
 
-function deductionRow(value: unknown, actionId: string): DeductionRow {
+function factTerm(fact: PlnFact): Term {
+  return mettaCall(
+    "PlnFact",
+    mettaString(fact.id),
+    mettaString(fact.actionId),
+    mettaString(fact.predicate),
+    mettaFloat(fact.strength),
+    mettaFloat(fact.confidence),
+  );
+}
+
+function finiteTruthValue(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`goalchainer.metta returned an invalid ${path}`);
+  }
+  return value;
+}
+
+function nativeDeduction(value: unknown, actionId: string): NativeDeduction {
   if (
     !Array.isArray(value) ||
-    value.length !== 6 ||
-    typeof value[0] !== "number" ||
-    typeof value[1] !== "number" ||
-    typeof value[2] !== "string" ||
-    typeof value[3] !== "string" ||
-    typeof value[4] !== "number" ||
-    typeof value[5] !== "number" ||
-    !Number.isFinite(value[4]) ||
-    !Number.isFinite(value[5])
+    value.length !== 5 ||
+    value[0] !== "Deduced" ||
+    typeof value[1] !== "string" ||
+    typeof value[2] !== "string"
   ) {
     throw new Error(`PLN returned an invalid deduction for action ${actionId}`);
   }
-  return value as DeductionRow;
+  return Object.freeze({
+    ruleId: value[1],
+    factId: value[2],
+    strength: finiteTruthValue(value[3], `${actionId} deduction strength`),
+    confidence: finiteTruthValue(value[4], `${actionId} deduction confidence`),
+  });
 }
 
-function revisedTruthValue(value: unknown, actionId: string): [number, number] {
-  if (
-    !Array.isArray(value) ||
-    value.length !== 2 ||
-    typeof value[0] !== "number" ||
-    typeof value[1] !== "number" ||
-    !Number.isFinite(value[0]) ||
-    !Number.isFinite(value[1]) ||
-    value[0] < 0 ||
-    value[0] > 1 ||
-    value[1] < 0 ||
-    value[1] > 1
-  ) {
-    throw new Error(`PLN returned an invalid revised truth value for action ${actionId}`);
+function proofNode(value: unknown, actionId: string): string {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`PLN returned an invalid proof for action ${actionId}`);
   }
-  return value as [number, number];
+  if (
+    value[0] === "RuleProof" &&
+    value.length === 3 &&
+    typeof value[1] === "string" &&
+    typeof value[2] === "string"
+  ) {
+    return `(rule-proof ${JSON.stringify(value[1])} ${JSON.stringify(value[2])})`;
+  }
+  if (value[0] === "Revision" && value.length === 3) {
+    return `(revision ${proofNode(value[1], actionId)} ${proofNode(value[2], actionId)})`;
+  }
+  if (value[0] === "RevisionSequence" && value.length === 2) {
+    return `(revision-sequence ${proofNode(value[1], actionId)})`;
+  }
+  if (value[0] === "ProofSequenceNode" && value.length === 3) {
+    return `(proof-sequence ${proofNode(value[1], actionId)} ${proofNode(value[2], actionId)})`;
+  }
+  throw new Error(`PLN returned an invalid proof node for action ${actionId}`);
 }
 
-/** Deduce one acceptability belief per requested action.
+function readActionResult(
+  value: unknown,
+  actionId: string,
+  ruleIndex: ReadonlyMap<string, number>,
+  factIndex: ReadonlyMap<string, number>,
+): {
+  belief: Belief;
+  raw: string;
+  proofOutput: string;
+} {
+  if (!Array.isArray(value) || value.length !== 3 || value[0] !== "PlnResult") {
+    throw new Error(`PLN returned an invalid result for action: ${actionId}`);
+  }
+  if (!Array.isArray(value[2])) {
+    throw new Error(`PLN returned invalid deductions for action: ${actionId}`);
+  }
+  const deductions = value[2].map((entry) => nativeDeduction(entry, actionId));
+  if (deductions.length === 0 || !Array.isArray(value[1]) || value[1][0] === "NoBelief") {
+    throw new Error(`PLN returned no belief for action: ${actionId}`);
+  }
+  if (value[1].length !== 4 || value[1][0] !== "Belief") {
+    throw new Error(`PLN returned an invalid belief for action: ${actionId}`);
+  }
+  const strength = finiteTruthValue(value[1][1], `${actionId} belief strength`);
+  const confidence = finiteTruthValue(value[1][2], `${actionId} belief confidence`);
+  proofNode(value[1][3], actionId);
+  const flatProofs = deductions.map(
+    (deduction) =>
+      `(rule-proof ${JSON.stringify(deduction.ruleId)} ${JSON.stringify(deduction.factId)})`,
+  );
+  const proofTerm = flatProofs.length === 1
+    ? flatProofs[0]!
+    : `(merge/revision ${flatProofs.join(" ")})`;
+  const proof = `(: ${proofTerm} (Acceptable ${JSON.stringify(actionId)}) (STV ${strength} ${confidence}))`;
+  const rows = deductions.map((deduction) => [
+    ruleIndex.get(deduction.ruleId),
+    factIndex.get(deduction.factId),
+    deduction.ruleId,
+    deduction.factId,
+    deduction.strength,
+    deduction.confidence,
+  ]);
+  if (rows.some((row) => row[0] === undefined || row[1] === undefined)) {
+    throw new Error(`PLN returned an unknown rule or fact for action: ${actionId}`);
+  }
+  return {
+    belief: Object.freeze({ strength, confidence, proof }),
+    raw: JSON.stringify(rows),
+    proofOutput: proof,
+  };
+}
+
+/** Deduce one acceptability belief per requested action in MeTTa.
  *
- * Facts match rules by predicate. Multiple deductions for one action are
- * merged in input order with count-space revision using K=800.
+ * Facts match rules by predicate. Multiple deductions are merged in declared
+ * rule and fact order with count-space revision using K=800.
  */
 export function gradeBeliefs(input: PlnProgram): PlnResult {
   const program = snapshotProgram(input);
-
-  const db = mettaDB();
-  const ruleAtoms = program.rules.map((rule, index) =>
-    ruleAtom(index, rule.predicate, rule.id, rule.strength, rule.confidence),
-  );
-  const factAtoms = program.facts.map((fact, index) =>
-    factAtom(
-      index,
-      fact.actionId,
-      fact.id,
-      fact.predicate,
-      fact.strength,
-      fact.confidence,
-    ),
-  );
-  addTerms(db, ruleAtoms);
-  addTerms(db, factAtoms);
-
-  const q = vars<{
-    action: string;
-    ruleIndex: number;
-    factIndex: number;
-    ruleId: string;
-    factId: string;
-    predicate: string;
-    ruleStrength: number;
-    ruleConfidence: number;
-    factStrength: number;
-    factConfidence: number;
-  }>();
-  const deductionHead = deduction(q.action);
-  const deductionBody = Match(
-      factAtom(
-        q.factIndex,
-        q.action,
-        q.factId,
-        q.predicate,
-        q.factStrength,
-        q.factConfidence,
-      ),
-      Match(
-        ruleAtom(
-          q.ruleIndex,
-          q.predicate,
-          q.ruleId,
-          q.ruleStrength,
-          q.ruleConfidence,
-        ),
-        e(
-          q.ruleIndex,
-          q.factIndex,
-          q.ruleId,
-          q.factId,
-          deducedStrength(q.ruleStrength, q.factStrength),
-          deducedConfidence(q.ruleConfidence, q.factConfidence, q.factStrength),
-        ),
-      ),
-    );
-  db.rule(deductionHead, deductionBody);
-
+  const rules = program.rules.map(ruleTerm);
+  const facts = program.facts.map(factTerm);
+  const queries = program.actionIds.map((actionId) => mettaCall(
+    "gc-pln-evaluate",
+    mettaString(actionId),
+    mettaTuple(rules),
+    mettaTuple(facts),
+  ));
+  const groups = sharedGoalChainerMetta().evalJsMany(queries);
+  const ruleIndexes = new Map(program.rules.map((rule, index) => [rule.id, index]));
+  const factIndexes = new Map(program.facts.map((fact, index) => [fact.id, index]));
   const beliefEntries: Array<readonly [string, Belief]> = [];
   const rawOutputs: string[] = [];
   const proofOutputs: string[] = [];
-  for (const actionId of program.actionIds) {
-    const rows = db.evalJs(deduction(actionId)).map((row) => deductionRow(row, actionId));
-    rows.sort((left, right) => left[0] - right[0] || left[1] - right[1]);
-    rawOutputs.push(JSON.stringify(rows));
-    if (rows.length === 0) {
-      throw new Error(`PLN returned no belief for action: ${actionId}`);
+  groups.forEach((values, index) => {
+    const actionId = program.actionIds[index]!;
+    if (values.length !== 1) {
+      throw new Error(`PLN returned ${values.length} results for action: ${actionId}`);
     }
-
-    let strength = rows[0]![4];
-    let confidence = rows[0]![5];
-    for (const row of rows.slice(1)) {
-      [strength, confidence] = revisedTruthValue(
-        db.evalJs(
-          e(
-            revisedStrength(strength, confidence, row[4], row[5]),
-            revisedConfidence(confidence, row[5]),
-          ),
-        )[0],
-        actionId,
-      );
-    }
-
-    const proofs = rows.map(
-      (row) => `(rule-proof ${JSON.stringify(row[2])} ${JSON.stringify(row[3])})`,
-    );
-    const proofTerm =
-      proofs.length === 1 ? proofs[0]! : `(merge/revision ${proofs.join(" ")})`;
-    const proof = `(: ${proofTerm} (Acceptable ${JSON.stringify(actionId)}) (STV ${strength} ${confidence}))`;
-    beliefEntries.push([actionId, Object.freeze({ strength, confidence, proof })]);
-    proofOutputs.push(proof);
-  }
-
+    const decoded = readActionResult(values[0], actionId, ruleIndexes, factIndexes);
+    beliefEntries.push([actionId, decoded.belief]);
+    rawOutputs.push(decoded.raw);
+    proofOutputs.push(decoded.proofOutput);
+  });
   return Object.freeze({
     actionIds: program.actionIds,
     beliefs: Object.freeze(Object.fromEntries(beliefEntries)),
     deductionProgram: [
-      ...ruleAtoms.map(String),
-      ...factAtoms.map(String),
-      `(= ${deductionHead} ${deductionBody})`,
-      ...program.actionIds.map((actionId) => `!${deduction(actionId)}`),
+      ...rules.map(String),
+      ...facts.map(String),
+      ...queries.map((query) => `!${String(query)}`),
     ].join("\n"),
     rawOutputs: Object.freeze(rawOutputs),
     proofOutputs: Object.freeze(proofOutputs),

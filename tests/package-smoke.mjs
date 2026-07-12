@@ -94,11 +94,12 @@ try {
   mkdirSync(consumer);
   for (const path of [
     "src",
+    "metta",
     "assets",
     "skills",
+    "ARCHITECTURE.md",
     "README.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md",
     "package.json",
     "package-lock.json",
     "tsconfig.json",
@@ -118,7 +119,6 @@ try {
     "core",
     "deontic",
     "directive",
-    "engine",
     "execute",
     "explain",
     "hyperbase",
@@ -126,6 +126,8 @@ try {
     "input",
     "json",
     "models",
+    "metta",
+    "metta_bulk",
     "motivation",
     "native_score",
     "ontology",
@@ -134,6 +136,7 @@ try {
     "prolog_runtime",
     "reasoner",
     "records",
+    "rounding",
     "score",
     "skill_installer",
     "snars",
@@ -141,12 +144,12 @@ try {
   ];
   const allowedFiles = new Set([
     "README.md",
+    "ARCHITECTURE.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md",
     "package.json",
-    "assets/data-colore.metta",
     "assets/gc_directive.pl",
     "assets/gc_score.pl",
+    "metta/goalchainer.metta",
     "skills/goalchainer/SKILL.md",
     "skills/goalchainer/references/input-schema.md",
     "skills/goalchainer/agents/openai.yaml",
@@ -170,17 +173,19 @@ try {
     "dist/index.js",
     "dist/index.d.ts",
     "dist/cli.js",
+    "dist/metta_bulk.js",
+    "dist/metta_bulk.d.ts",
     "dist/prolog.js",
     "dist/skill_installer.js",
-    "assets/data-colore.metta",
     "assets/gc_directive.pl",
     "assets/gc_score.pl",
+    "metta/goalchainer.metta",
     "skills/goalchainer/SKILL.md",
     "skills/goalchainer/references/input-schema.md",
     "skills/goalchainer/agents/openai.yaml",
+    "ARCHITECTURE.md",
     "README.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md",
     "package.json",
   ]) {
     assert(files.has(required), `package is missing ${required}`);
@@ -198,16 +203,91 @@ try {
     JSON.stringify({ name: "goalchainer-package-consumer", version: "1.0.0", private: true }),
   );
   run(NPM, ["install", tarball, "--ignore-scripts", "--no-audit", "--no-fund"], consumer);
+  writeFileSync(
+    join(consumer, "consumer.ts"),
+    [
+      'import type { DecisionRanking } from "goalchainer-ts";',
+      "declare const ranking: DecisionRanking;",
+      "const allowed: boolean = ranking.automaticExecutionAllowed;",
+      "void allowed;",
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(
+    join(consumer, "tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        noEmit: true,
+        strict: true,
+        target: "ES2022",
+      },
+      files: ["consumer.ts"],
+    }),
+  );
+  run(
+    process.execPath,
+    [join(ROOT, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"],
+    consumer,
+  );
+
+  const installedMetta = join(
+    consumer,
+    "node_modules",
+    "goalchainer-ts",
+    "metta",
+    "goalchainer.metta",
+  );
+  const scoreProgram = `
+    const { scoreActions } = await import("goalchainer-ts");
+    process.stdout.write(JSON.stringify(scoreActions([["permitted", 0, 0, 1]])));
+  `;
+  const readInstalledScore = () => {
+    const result = run(process.execPath, ["--input-type=module", "--eval", scoreProgram], consumer);
+    assert.equal(result.stderr, "");
+    return JSON.parse(result.stdout);
+  };
+  const pristineMetta = readFileSync(installedMetta, "utf8");
+  const scoreCoefficient = "(* 0.54 $motivation)";
+  assert.equal(
+    pristineMetta.split(scoreCoefficient).length,
+    2,
+    "packaged score coefficient is missing or ambiguous",
+  );
+  assert.deepEqual(readInstalledScore(), [0.54]);
+  try {
+    writeFileSync(installedMetta, pristineMetta.replace(scoreCoefficient, "(* 0.0 $motivation)"));
+    assert.deepEqual(
+      readInstalledScore(),
+      [0],
+      "installed scoreActions did not execute the packaged MeTTa source",
+    );
+  } finally {
+    writeFileSync(installedMetta, pristineMetta);
+  }
+  assert.deepEqual(readInstalledScore(), [0.54], "packaged MeTTa source was not restored");
 
   const serializedInput = JSON.stringify(neutralInput());
+  const ontologyPath = join(consumer, "caller-ontology.metta");
+  writeFileSync(
+    ontologyPath,
+    [
+      '(colore module caller "Caller ontology")',
+      "(colore pred caller relation 2)",
+      "(colore axiom caller axiom relation (relation x y))",
+      '(colore gloss caller axiom "Caller-supplied relation")',
+      "",
+    ].join("\n"),
+  );
   const apiProgram = `
     const m = await import("goalchainer-ts");
     const input = ${serializedInput};
     const run = m.runGoalChainer(input);
-    const ontology = m.loadColoreContext();
+    const ontology = m.loadColoreContext(${JSON.stringify(ontologyPath)});
     if (run.selected.actionId !== "verified-action") process.exit(10);
     if (!run.automaticExecutionAllowed) process.exit(14);
-    if (!ontology.source_available) process.exit(11);
+    if (!ontology.source_available || ontology.axiom_count !== 1) process.exit(11);
     if (typeof m.checkDirectivePrologParity !== "function") process.exit(12);
     if (typeof m.installAgentSkill !== "function") process.exit(13);
   `;
@@ -257,7 +337,7 @@ try {
   }
 
   console.log(
-    `package smoke passed: ${packResult.files.length} files, API, bins, assets, and skills verified`,
+    `package smoke passed: ${packResult.files.length} files, native MeTTa, API, bins, assets, and skills verified`,
   );
 } finally {
   rmSync(auditRoot, { recursive: true, force: true });

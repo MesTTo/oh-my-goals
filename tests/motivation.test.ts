@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   consensusDecision,
   createMotivationResult,
+  MOTIVATION_ENGINE,
   motivationSummary,
 } from "../src/motivation.js";
-import type { GoalScenario } from "../src/models.js";
+import { mettaCall, mettaFloat, sharedGoalChainerMetta } from "../src/metta.js";
+import { roundN, type GoalScenario } from "../src/models.js";
 
 function neutralScenario(): GoalScenario {
   return {
@@ -56,31 +58,24 @@ function neutralScenario(): GoalScenario {
 }
 
 describe("generic motivation consensus", () => {
-  it("canonicalizes tolerated consensus drift before normalization", () => {
-    const input = {
-      engine: "test motivation engine",
-      individual_goals: [1],
-      collective_goals: [0],
-      candidates: [
-        { id: "a", corr: [0], risk: 0 },
-        { id: "b", corr: [0], risk: 0 },
-      ],
-      goal_pull: { individual: "a", collective: null },
-      subsystem_preference: { individual: "a", collective: null },
-      consensus_scores: { a: 0, b: 5e-13 },
-      consensus: "a",
-    } as const;
-
-    const result = createMotivationResult(input);
-    expect(result.consensus_scores).toEqual({ a: 0, b: 0 });
+  it("revalidates reconstructed receipts against the native relation", () => {
+    const native = consensusDecision(neutralScenario(), {}, {
+      correlations: {
+        action_left: { goal_personal: 0, goal_shared: 0 },
+        action_right: { goal_personal: 0, goal_shared: 0 },
+      },
+      risks: { action_left: 0, action_right: 0 },
+    });
+    const result = createMotivationResult(structuredClone(native));
+    expect(result.consensus_scores).toEqual({ action_left: 0, action_right: 0 });
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.candidates[0]!.corr)).toBe(true);
-    expect(() => createMotivationResult({ ...input, consensus: "b" })).toThrow(
-      "consensus is inconsistent",
-    );
     expect(() =>
-      createMotivationResult({ ...input, consensus_scores: { a: 0, b: 0.1 } }),
-    ).toThrow("consensus score is inconsistent for b");
+      createMotivationResult({
+        ...structuredClone(native),
+        consensus_scores: { action_left: 0, action_right: 5e-13 },
+      }),
+    ).toThrow("inconsistent with goalchainer.metta");
   });
 
   it("supports custom negative correlations and per-action risks", () => {
@@ -101,7 +96,7 @@ describe("generic motivation consensus", () => {
     expect(result.consensus_scores.action_right).toBeCloseTo(-0.15, 12);
     expect(result.consensus).toBe("action_right");
     expect(motivationSummary(result)).toEqual({
-      engine: "goal consensus on @metta-ts",
+      engine: MOTIVATION_ENGINE,
       goal_pull: result.goal_pull,
       subsystem_preference: result.subsystem_preference,
       consensus: "action_right",
@@ -116,6 +111,22 @@ describe("generic motivation consensus", () => {
       { id: "action_right", corr: [0, 1], risk: 0.6 },
     ]);
     expect(result.goal_pull).toEqual({ individual: "action_left", collective: "action_right" });
+  });
+
+  it("matches Python half-even rounding for default risks", () => {
+    let state = 0x9e3779b9;
+    const strengths = [0, 0.0005, 0.0015, 0.2345, 0.7655, 0.9985, 0.9995, 1];
+    for (let index = 0; index < 512; index += 1) {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      strengths.push(state / 0x1_0000_0000);
+    }
+    const groups = sharedGoalChainerMetta().evalJsMany(strengths.map((strength) =>
+      mettaCall("gc-default-risk", mettaFloat(strength))
+    ));
+    groups.forEach((values, index) => {
+      expect(values).toHaveLength(1);
+      expect(values[0]).toBe(roundN(1 - strengths[index]!, 3));
+    });
   });
 
   it("marks an absent goal subsystem as not applicable", () => {
