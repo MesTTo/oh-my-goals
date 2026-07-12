@@ -10,7 +10,6 @@ import {
   structuredEnglishPrompt,
   type StructuredPropositionInput,
 } from "../src/hyperbase.js";
-import type { OntologyContext } from "../src/ontology.js";
 
 const propositionInput = (
   overrides: Partial<StructuredPropositionInput> = {},
@@ -27,7 +26,7 @@ const propositionInput = (
 describe("generic HyperBase propositions", () => {
   it("renders a structured proposition and its MeTTa facts", () => {
     const proposition = makeProposition(
-      propositionInput({ edgePredicate: "is linked to", ontologyHint: "caller hint" }),
+      propositionInput({ edgePredicate: "is linked to" }),
     );
 
     expect(proposition.edge).toBe(
@@ -42,7 +41,6 @@ describe("generic HyperBase propositions", () => {
     );
     expect(proposition.facts).toContain('(hb sentence "proposition_one" "Entity A relates to Entity B.")');
     expect(proposition.facts).toContain('(hb source "proposition_one" "caller")');
-    expect(proposition.ontology_hint).toBe("caller hint");
     for (const fact of proposition.facts) expect(() => parseSource(fact)).not.toThrow();
   });
 
@@ -62,7 +60,6 @@ describe("generic HyperBase propositions", () => {
         `proposition ${field} must not be empty`,
       );
     }
-    expect(() => makeProposition(propositionInput({ ontologyHint: "" }))).not.toThrow();
   });
 
   it("rejects non-string proposition fields before rendering atoms", () => {
@@ -73,9 +70,6 @@ describe("generic HyperBase propositions", () => {
     }
     expect(() => makeProposition(propositionInput({ edgePredicate: 123 as any }))).toThrow(
       "proposition edgePredicate must be a string",
-    );
-    expect(() => makeProposition(propositionInput({ ontologyHint: 123 as any }))).toThrow(
-      "proposition ontologyHint must be a string",
     );
     expect(() =>
       makeProposition(propositionInput({ edgePredciate: "supports" } as any)),
@@ -119,16 +113,12 @@ describe("generic HyperBase propositions", () => {
     }
   });
 
-  it("assembles packet metadata with and without ontology grounding", () => {
-    const withoutOntology = buildHyperbasePacket([propositionInput()]);
-    expect(withoutOntology.structured_english).toEqual(["Entity A relates to Entity B."]);
-    expect(withoutOntology.metta_program).toHaveLength(22);
-    expect(withoutOntology.ontology_grounding).toEqual({
-      source_available: false,
-      projection_rules: [],
-    });
-    expect(withoutOntology.contract).toEqual(hyperbaseContract());
-    expect(withoutOntology.structured_english_prompt).toBe(structuredEnglishPrompt());
+  it("assembles packet metadata", () => {
+    const packet = buildHyperbasePacket([propositionInput()]);
+    expect(packet.structured_english).toEqual(["Entity A relates to Entity B."]);
+    expect(packet.metta_program).toHaveLength(22);
+    expect(packet.contract).toEqual(hyperbaseContract());
+    expect(packet.structured_english_prompt).toBe(structuredEnglishPrompt());
     expect(structuredEnglishPrompt()).toContain("Write one proposition per sentence.");
     expect(structuredEnglishPrompt()).toContain(
       "Use one concrete subject, one predicate, and one object or complement.",
@@ -139,43 +129,6 @@ describe("generic HyperBase propositions", () => {
     expect(structuredEnglishPrompt()).toContain("Send the propositions to HyperBase first.");
     expect(structuredEnglishPrompt()).toContain(
       "Use the resulting facts as evidence for the MeTTa-TS reasoner.",
-    );
-
-    const ontology: OntologyContext = {
-      source_path: "/caller/ontology.metta",
-      source_available: true,
-      module_count: 2,
-      axiom_count: 3,
-      predicate_count: 4,
-      gloss_count: 1,
-      axiom_kinds: { horn: 3 },
-      selected_axioms: [],
-      projection_rules: [
-        {
-          id: "rule_one",
-          source: "caller/rule",
-          available: true,
-          kind: "horn",
-          from: ["relates(x, y)"],
-          to: "connected(x, y)",
-          gloss: "",
-        },
-      ],
-    };
-    expect(buildHyperbasePacket([], ontology).ontology_grounding).toEqual({
-      source_available: true,
-      source_path: "/caller/ontology.metta",
-      module_count: 2,
-      axiom_count: 3,
-      projection_rules: ontology.projection_rules,
-    });
-    const packet = buildHyperbasePacket([], ontology);
-    ontology.projection_rules[0]!.from.push("later mutation");
-    expect(
-      (packet.ontology_grounding.projection_rules as OntologyContext["projection_rules"])[0]!.from,
-    ).toEqual(["relates(x, y)"]);
-    expect(() => buildHyperbasePacket([], 42 as any)).toThrow(
-      "ontology context must be a plain object record",
     );
   });
 

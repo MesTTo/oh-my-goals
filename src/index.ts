@@ -17,7 +17,6 @@ export * from "./truth_value.js";
 export * from "./prolog.js";
 export * from "./core.js";
 export * from "./directive.js";
-export * from "./ontology.js";
 export * from "./hyperbase.js";
 export * from "./explain.js";
 export * from "./execute.js";

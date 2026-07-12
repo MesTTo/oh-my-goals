@@ -2008,9 +2008,3 @@
       (match &self
          (DirectiveClaimOpen $task)
          (DirectiveNextRow $order $task $agent $rule))))
-
-; Verify a caller-declared projection against the ontology axiom it names.
-(= (gc-projection-available $kind $expression $expected-kind $expected-expression)
-   (and
-      (noreduce-eq $kind $expected-kind)
-      (noreduce-eq $expression $expected-expression)))

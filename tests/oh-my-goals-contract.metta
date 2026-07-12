@@ -114,7 +114,3 @@
 !(assertEqual (gc-directive-task-state obligated) ready)
 !(assertEqual (gc-directive-task-state conflict) blocked)
 !(assertEqual (gc-directive-task-state unregulated) backlog)
-
-!(assertEqual
-   (gc-projection-available kind expression kind expression)
-   True)

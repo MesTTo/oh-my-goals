@@ -38,7 +38,6 @@ The MeTTa module declares and routes the following decisions. Large-input mirror
 | PLN | `gc-pln-evaluate` and its deduction and revision relations | Deductions and count-space belief revision |
 | SNARS | `gc-snars-assess`, `gc-snars-deduction` | Subjective opinions, expectations, and two-premise deductions |
 | Directives | `gc-directive-task-state` and the `gc-directive-*` lifecycle relations | Task state, readiness, claimability, claims, and next assignments |
-| Ontology projection | `gc-projection-available` | Exact agreement between a caller-declared projection and its source axiom |
 
 TypeScript checks the shape and vocabulary of the returned atoms before exposing them as public values. Those checks detect malformed or inconsistent evaluator output. The grounded mirrors implement only the collection steps documented below; the remaining host code does not choose a different outcome.
 
@@ -115,8 +114,7 @@ The package ports the reusable framework slice represented by its public API:
 - individual and collective motivation consensus;
 - the selected PLN deduction and count-space revision formulas;
 - SNARS opinion construction and two-premise deduction;
-- directive state and claim lifecycle relations;
-- caller-declared projection checks over the documented line-oriented COLORE adapter records.
+- directive state and claim lifecycle relations.
 
 The package does not claim to implement a general theorem prover, a complete deontic-logic library, a complete planner or chainer, a full NARS runtime, or a probabilistic logic runtime.
 

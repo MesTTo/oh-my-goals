@@ -1,6 +1,5 @@
 // Structured propositions and Semantic-Hypergraph facts for caller-supplied data.
 
-import type { OntologyContext } from "./ontology.js";
 import { assertDenseArray, assertKnownKeys, assertPlainRecord } from "./records.js";
 
 const TOKEN_RE = /[^a-z0-9]+/g;
@@ -22,7 +21,6 @@ export interface StructuredPropositionInput {
   object: string;
   source: string;
   edgePredicate?: string;
-  ontologyHint?: string;
 }
 
 export interface StructuredProposition {
@@ -35,7 +33,6 @@ export interface StructuredProposition {
   tree: string;
   facts: string[];
   source: string;
-  ontology_hint: string;
 }
 
 export interface HyperbasePacket {
@@ -44,7 +41,6 @@ export interface HyperbasePacket {
   structured_english: string[];
   propositions: StructuredProposition[];
   metta_program: string[];
-  ontology_grounding: Record<string, unknown>;
 }
 
 const token = (label: string): string => {
@@ -77,7 +73,6 @@ export function makeProposition(input: StructuredPropositionInput): StructuredPr
     "object",
     "source",
     "edgePredicate",
-    "ontologyHint",
   ]);
   const required = ["id", "sentence", "predicate", "subject", "object", "source"] as const;
   for (const key of required) {
@@ -94,9 +89,6 @@ export function makeProposition(input: StructuredPropositionInput): StructuredPr
   }
   if (input.edgePredicate !== undefined && input.edgePredicate.trim() === "") {
     throw new RangeError("proposition edgePredicate must not be empty");
-  }
-  if (input.ontologyHint !== undefined && typeof input.ontologyHint !== "string") {
-    throw new TypeError("proposition ontologyHint must be a string");
   }
   const edgePredicate = input.edgePredicate === undefined ? input.predicate : input.edgePredicate;
   const subjectEdge = edgeAtom(input.subject);
@@ -139,7 +131,6 @@ export function makeProposition(input: StructuredPropositionInput): StructuredPr
     tree: treeValue,
     facts,
     source: input.source,
-    ontology_hint: input.ontologyHint === undefined ? "" : input.ontologyHint,
   };
 }
 
@@ -165,82 +156,9 @@ export function structuredEnglishPrompt(): string {
   return STRUCTURED_ENGLISH_SYSTEM_PROMPT;
 }
 
-function ontologyGrounding(ontology: OntologyContext | null): Record<string, unknown> {
-  if (ontology === null) return { source_available: false, projection_rules: [] };
-  assertPlainRecord(ontology, "ontology context");
-  assertKnownKeys(ontology, "ontology context", [
-    "source_path",
-    "source_available",
-    "module_count",
-    "axiom_count",
-    "predicate_count",
-    "gloss_count",
-    "axiom_kinds",
-    "selected_axioms",
-    "projection_rules",
-  ]);
-  if (typeof ontology.source_available !== "boolean") {
-    throw new TypeError("ontology source_available must be boolean");
-  }
-  if (typeof ontology.source_path !== "string") {
-    throw new TypeError("ontology source_path must be a string");
-  }
-  for (const [field, value] of [
-    ["module_count", ontology.module_count],
-    ["axiom_count", ontology.axiom_count],
-  ] as const) {
-    if (!Number.isSafeInteger(value) || value < 0) {
-      throw new TypeError(`ontology ${field} must be a non-negative safe integer`);
-    }
-  }
-  assertDenseArray(ontology.projection_rules, "ontology projection_rules");
-  const projectionRules = Object.freeze(
-    ontology.projection_rules.map((rule, index) => {
-      assertPlainRecord(rule, `ontology projection_rules[${index}]`);
-      assertKnownKeys(rule, `ontology projection_rules[${index}]`, [
-        "id",
-        "source",
-        "available",
-        "kind",
-        "from",
-        "to",
-        "gloss",
-      ]);
-      for (const field of ["id", "source", "to", "gloss"] as const) {
-        if (typeof rule[field] !== "string") {
-          throw new TypeError(`ontology projection_rules[${index}].${field} must be a string`);
-        }
-      }
-      if (typeof rule.available !== "boolean") {
-        throw new TypeError(`ontology projection_rules[${index}].available must be boolean`);
-      }
-      if (rule.kind !== null && typeof rule.kind !== "string") {
-        throw new TypeError(`ontology projection_rules[${index}].kind must be a string or null`);
-      }
-      assertDenseArray(rule.from, `ontology projection_rules[${index}].from`);
-      rule.from.forEach((premise, premiseIndex) => {
-        if (typeof premise !== "string") {
-          throw new TypeError(
-            `ontology projection_rules[${index}].from[${premiseIndex}] must be a string`,
-          );
-        }
-      });
-      return Object.freeze({ ...rule, from: Object.freeze([...rule.from]) });
-    }),
-  );
-  return {
-    source_available: ontology.source_available,
-    source_path: ontology.source_path,
-    module_count: ontology.module_count,
-    axiom_count: ontology.axiom_count,
-    projection_rules: projectionRules,
-  };
-}
-
 /** Assemble a HyperBase packet from explicit propositions. */
 export function buildHyperbasePacket(
   inputs: readonly StructuredPropositionInput[],
-  ontology: OntologyContext | null = null,
 ): HyperbasePacket {
   assertDenseArray(inputs, "proposition inputs");
   const ids = new Set<string>();
@@ -258,6 +176,5 @@ export function buildHyperbasePacket(
     structured_english: propositions.map((proposition) => proposition.sentence),
     propositions,
     metta_program: propositions.flatMap((proposition) => proposition.facts),
-    ontology_grounding: ontologyGrounding(ontology),
   };
 }

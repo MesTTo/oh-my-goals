@@ -131,7 +131,6 @@ try {
     "metta_bulk",
     "motivation",
     "native_score",
-    "ontology",
     "pln",
     "prolog",
     "prolog_runtime",
@@ -270,25 +269,12 @@ try {
   assert.deepEqual(readInstalledScore(), [0.54], "packaged MeTTa source was not restored");
 
   const serializedInput = JSON.stringify(neutralInput());
-  const ontologyPath = join(consumer, "caller-ontology.metta");
-  writeFileSync(
-    ontologyPath,
-    [
-      '(colore module caller "Caller ontology")',
-      "(colore pred caller relation 2)",
-      "(colore axiom caller axiom relation (relation x y))",
-      '(colore gloss caller axiom "Caller-supplied relation")',
-      "",
-    ].join("\n"),
-  );
   const apiProgram = `
     const m = await import("oh-my-goals");
     const input = ${serializedInput};
     const run = m.runGoalChainer(input);
-    const ontology = m.loadColoreContext(${JSON.stringify(ontologyPath)});
     if (run.selected.actionId !== "verified-action") process.exit(10);
     if (!run.automaticExecutionAllowed) process.exit(14);
-    if (!ontology.source_available || ontology.axiom_count !== 1) process.exit(11);
     if (typeof m.checkDirectivePrologParity !== "function") process.exit(12);
     if (typeof m.installAgentSkill !== "function") process.exit(13);
   `;

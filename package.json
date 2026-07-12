@@ -1,7 +1,7 @@
 {
   "name": "oh-my-goals",
   "version": "0.1.0",
-  "description": "Native MeTTa decision framework with a TypeScript host, deontic norms, graded evidence, task directives, and Agent Skill integration.",
+  "description": "Local MeTTa reasoning core for coding agents: deontic norms, graded evidence, goals, motivation, and explained decisions on a TypeScript host, with Agent Skill integration.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
