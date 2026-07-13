@@ -526,7 +526,8 @@ function registerPromptsAndResources(server: McpServer, runtime: MemoryRuntime):
                 session: "temporary facts and hypotheses for one active task",
                 project: "repository-specific facts and decisions",
                 user: "stable preferences the user explicitly promoted",
-                derived: "conclusions and proof dependencies computed from the visible scopes",
+                derived:
+                  "conclusions and proof dependencies computed from the visible scopes; a solve reads them alongside the scope it solves, so a conclusion stored here or in the solved scope informs the decision",
               },
               repository: runtime.repository ?? null,
               session: runtime.session ?? null,

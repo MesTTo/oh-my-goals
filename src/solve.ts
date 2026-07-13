@@ -371,7 +371,16 @@ function collectActionSignals(
     }
     return entry;
   };
-  for (const id of memory.activeOfKind(scope, "derived-conclusion")) {
+  // A derived conclusion informs the solve when it sits in the scope being solved
+  // or in the shared "derived" scope, where conclusions computed from the visible
+  // scopes are kept. memory.ts isolates "derived" by repository, like "project",
+  // so a repo's derived conclusions inform its solves without crossing repos.
+  // Union the two, deduped, so solving the derived scope counts each once.
+  const conclusionIds = new Set<string>(memory.activeOfKind(scope, "derived-conclusion"));
+  if (scope !== "derived") {
+    for (const id of memory.activeOfKind("derived", "derived-conclusion")) conclusionIds.add(id);
+  }
+  for (const id of conclusionIds) {
     const proposition = memory.get(id);
     if (proposition === undefined) continue;
     const tree = treeOf(proposition);

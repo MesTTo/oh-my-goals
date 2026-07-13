@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ShAtom, ShEdge, ShNode } from "../src/hyperbase.js";
-import { createMemorySpace, type MemorySpace, type MemorySourceInput } from "../src/memory.js";
+import { createMemorySpace, type MemoryScope, type MemorySpace, type MemorySourceInput } from "../src/memory.js";
 import { actionReferences, MemoryEvidenceReasoner, solveFromMemory } from "../src/solve.js";
 import { createCandidateAction } from "../src/models.js";
 
@@ -54,7 +54,12 @@ function storeAction(memory: MemorySpace, id: string): void {
     polarity: "affirmative",
   });
 }
-function deriveAbout(memory: MemorySpace, id: string, kind: "support" | "conflict"): string {
+function deriveAbout(
+  memory: MemorySpace,
+  id: string,
+  kind: "support" | "conflict",
+  scope: MemoryScope = "project",
+): string {
   const premise = memory.remember({
     content: `A ${kind} signal about ${id}.`,
     scope: "project",
@@ -65,7 +70,7 @@ function deriveAbout(memory: MemorySpace, id: string, kind: "support" | "conflic
     content: `Action ${id} ${kind === "conflict" ? "conflicts with the authentication constraint" : "satisfies the goal"}.`,
     rule: `${kind}-rule`,
     premises: [premise.id],
-    scope: "project",
+    scope,
     shTree: kind === "conflict" ? conflictTree(id) : supportTree(id),
     polarity: "affirmative",
   });
@@ -233,5 +238,35 @@ describe("exit criterion: evidence changes the recommendation, retraction restor
     expect(trace.conflicts).toHaveLength(1);
     expect(trace.supports).toHaveLength(1);
     memory.close();
+  });
+
+  it("reads a conclusion from the shared derived scope in a project solve, identically to one in project scope", () => {
+    // The documented model keeps conclusions computed from the visible scopes in
+    // the shared "derived" scope, and a solve reads them alongside its own scope.
+    // A conflict stored in "derived" must block a project solve exactly as one
+    // stored in "project" does, and retracting its premise must restore both.
+    const derived = space();
+    storeAction(derived, "a_solo");
+    const premise = deriveAbout(derived, "a_solo", "conflict", "derived");
+    const blockedFromDerived = solveFromMemory(derived, { scope: "project" });
+
+    const project = space();
+    storeAction(project, "a_solo");
+    deriveAbout(project, "a_solo", "conflict", "project");
+    const blockedFromProject = solveFromMemory(project, { scope: "project" });
+
+    // A derived-scope conclusion blocks the project solve identically to a
+    // project-scope one: same block set, same withheld recommendation.
+    expect(blockedFromDerived.blockedActionIds).toEqual(["a_solo"]);
+    expect(blockedFromDerived.blockedActionIds).toEqual(blockedFromProject.blockedActionIds);
+    expect(blockedFromDerived.recommended).toBe(blockedFromProject.recommended);
+
+    // Retracting the observation the derived-scope conclusion rests on invalidates
+    // its proof across scopes, so the project solve restores the action.
+    derived.retract(premise);
+    const restored = solveFromMemory(derived, { scope: "project" });
+    expect(restored.blockedActionIds).toEqual([]);
+    derived.close();
+    project.close();
   });
 });
