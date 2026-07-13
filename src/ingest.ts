@@ -7,8 +7,10 @@
 // nothing is written. The composition keeps MemorySpace pure and synchronous:
 // this module is the only place the async parser meets the store.
 
+import { semanticCandidatesForEdge } from "./candidates.js";
 import {
   appendContract,
+  type HyperbaseParse,
   type HyperbaseParseItem,
   type HyperbaseParser,
   type Polarity,
@@ -24,6 +26,7 @@ import {
   type StoredProposition,
 } from "./memory.js";
 import { assertDenseArray, assertKnownKeys, assertPlainRecord } from "./records.js";
+import { scopeSpaceId, type SemanticBackend } from "./semantic.js";
 
 export interface IngestInput {
   readonly content: string;
@@ -48,6 +51,13 @@ export interface IngestRejected {
 }
 
 export type IngestResult = IngestAccepted | IngestRejected;
+
+/** Optional semantic indexing: decompose each stored proposition and upsert its
+ * candidates into a backend under the space id for its scope. */
+export interface IngestSemanticOptions {
+  readonly backend: SemanticBackend;
+  readonly identity?: { readonly repositoryId?: string; readonly sessionId?: string };
+}
 
 const ADMISSIBILITY_MESSAGES: Readonly<Record<string, string>> = {
   "interrogative-not-assertion":
@@ -143,11 +153,30 @@ function storeItem(
   };
 }
 
-/** Parse a batch of statements once, then store each admissible proposition. */
+async function indexStored(
+  semantic: IngestSemanticOptions,
+  propositionId: string,
+  input: ValidatedInput,
+  parse: HyperbaseParse,
+): Promise<void> {
+  const candidates = semanticCandidatesForEdge({
+    tree: parse.tree,
+    edgeId: propositionId,
+    spaceId: scopeSpaceId(input.scope, semantic.identity ?? {}),
+    sourceText: input.content,
+    polarity: parse.polarity,
+    epistemicKind: input.kind,
+  });
+  await semantic.backend.indexProposition(candidates);
+}
+
+/** Parse a batch of statements once, store each admissible proposition, and, when
+ * a semantic backend is given, index the stored propositions' candidates. */
 export async function ingestStatements(
   parser: HyperbaseParser,
   memory: MemorySpace,
   inputs: readonly IngestInput[],
+  semantic?: IngestSemanticOptions,
 ): Promise<IngestResult[]> {
   assertDenseArray(inputs, "ingest inputs");
   const validated = inputs.map((input) => validateInput(input));
@@ -157,7 +186,16 @@ export async function ingestStatements(
       `HyperBase returned ${batch.items.length} results for ${validated.length} statements`,
     );
   }
-  return validated.map((input, index) => storeItem(memory, input, batch.items[index]!));
+  const results = validated.map((input, index) => storeItem(memory, input, batch.items[index]!));
+  if (semantic !== undefined) {
+    for (let index = 0; index < results.length; index += 1) {
+      const result = results[index]!;
+      if (result.stored) {
+        await indexStored(semantic, result.proposition.id, validated[index]!, batch.items[index]!.parses[0]!);
+      }
+    }
+  }
+  return results;
 }
 
 /** Parse and store one statement. */
@@ -165,7 +203,8 @@ export async function ingestStatement(
   parser: HyperbaseParser,
   memory: MemorySpace,
   input: IngestInput,
+  semantic?: IngestSemanticOptions,
 ): Promise<IngestResult> {
-  const [result] = await ingestStatements(parser, memory, [input]);
+  const [result] = await ingestStatements(parser, memory, [input], semantic);
   return result!;
 }

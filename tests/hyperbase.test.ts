@@ -17,6 +17,10 @@ import {
 } from "../src/hyperbase.js";
 import { ingestStatements } from "../src/ingest.js";
 import { createMemorySpace } from "../src/memory.js";
+import { TokenEmbeddingProvider } from "../src/embedding.js";
+import { InMemoryVectorIndex } from "../src/vector_index.js";
+import { propositionIdsOf } from "../src/candidates.js";
+import { SemanticBackend, semanticOptions } from "../src/semantic.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const FAKE_WORKER = join(ROOT, "tests", "fixtures", "hb-fake-worker.mjs");
@@ -326,6 +330,29 @@ describe("memory ingestion through the parser (fake worker)", () => {
     if (!result!.stored) {
       expect(result!.reasons).toContain("no-root-relation");
       expect(result!.feedback).toContain("Write one asserted proposition per sentence.");
+    }
+  });
+
+  it("indexes a stored proposition's candidates into a semantic backend", async () => {
+    const memory = createMemorySpace();
+    const backend = new SemanticBackend(new TokenEmbeddingProvider(256), new InMemoryVectorIndex());
+    const [result] = await ingestStatements(
+      fake("ok"),
+      memory,
+      [
+        {
+          content: "The subject adds the object.",
+          scope: "project",
+          kind: "observation",
+          sources: [{ type: "tool", reference: "review" }],
+        },
+      ],
+      { backend, identity: { repositoryId: "repo-1" } },
+    );
+    expect(result!.stored).toBe(true);
+    if (result!.stored) {
+      const hits = await backend.search("omg:project:repo-1", "the subject adds the object", semanticOptions());
+      expect(propositionIdsOf(hits.map((h) => h.atomId!))).toContain(result!.proposition.id);
     }
   });
 

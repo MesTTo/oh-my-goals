@@ -116,10 +116,12 @@ try {
   const packResult = JSON.parse(packed.stdout)[0];
   const files = new Map(packResult.files.map((file) => [file.path, file]));
   const moduleStems = [
+    "candidates",
     "cli",
     "core",
     "deontic",
     "directive",
+    "embedding",
     "execute",
     "explain",
     "hyperbase",
@@ -140,9 +142,11 @@ try {
     "records",
     "rounding",
     "score",
+    "semantic",
     "skill_installer",
     "snars",
     "truth_value",
+    "vector_index",
   ];
   const allowedFiles = new Set([
     "README.md",
