@@ -77,6 +77,11 @@ export interface DurableStore {
   save(record: PersistedRecord): void;
   /** Permanently remove a record so its content cannot be recovered. */
   purge(id: string): void;
+  /** The highest id ordinal ever recorded for `prefix`. Preserved across purge so a
+   * generated id never reuses a purged one after a restart. Zero when none is stored. */
+  idCounter(prefix: string): number;
+  /** Raise the persisted id high-water mark for `prefix` to at least `value`. */
+  bumpIdCounter(prefix: string, value: number): void;
   /** Run a function as one atomic durable transaction. */
   transaction<T>(fn: () => T): T;
   close(): void;
@@ -96,9 +101,18 @@ function cloneRecord(record: PersistedRecord): PersistedRecord {
 /** Non-persistent store for tests and ephemeral memory. */
 export class InMemoryDurableStore implements DurableStore {
   #records = new Map<string, PersistedRecord>();
+  #counters = new Map<string, number>();
 
   allRecords(): PersistedRecord[] {
     return [...this.#records.values()].map(cloneRecord);
+  }
+
+  idCounter(prefix: string): number {
+    return this.#counters.get(prefix) ?? 0;
+  }
+
+  bumpIdCounter(prefix: string, value: number): void {
+    this.#counters.set(prefix, Math.max(this.#counters.get(prefix) ?? 0, value));
   }
 
   insert(record: PersistedRecord): void {
@@ -121,6 +135,7 @@ export class InMemoryDurableStore implements DurableStore {
 
   close(): void {
     this.#records.clear();
+    this.#counters.clear();
   }
 }
 
@@ -174,6 +189,10 @@ CREATE TABLE IF NOT EXISTS derivation (
   FOREIGN KEY (proposition_id) REFERENCES proposition(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS proposition_scope ON proposition(scope, repository, session);
+CREATE TABLE IF NOT EXISTS id_sequence (
+  prefix TEXT PRIMARY KEY,
+  value INTEGER NOT NULL
+);
 `;
 
 interface PropositionRow {
@@ -292,6 +311,23 @@ export class SqliteDurableStore implements DurableStore {
 
   save(record: PersistedRecord): void {
     this.transaction(() => this.#writeRecord(record, true));
+  }
+
+  idCounter(prefix: string): number {
+    const row = this.#db.prepare("SELECT value FROM id_sequence WHERE prefix = ?").get(prefix) as
+      | { value: number }
+      | undefined;
+    return row?.value ?? 0;
+  }
+
+  bumpIdCounter(prefix: string, value: number): void {
+    this.transaction(() =>
+      this.#db
+        .prepare(
+          "INSERT INTO id_sequence (prefix, value) VALUES (?, ?) ON CONFLICT(prefix) DO UPDATE SET value = MAX(value, excluded.value)",
+        )
+        .run(prefix, value),
+    );
   }
 
   #writeRecord(record: PersistedRecord, replace: boolean): void {

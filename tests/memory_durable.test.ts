@@ -114,6 +114,24 @@ describe("MemorySpace durable restart", () => {
     second.close();
   });
 
+  it("never reuses a purged id after a reopen, even when it was the highest", () => {
+    const path = dbPath();
+    const first = openSpace(path);
+    const one = first.remember({ content: "One.", scope: "project", kind: "goal", sources: [userSource] });
+    const two = first.remember({ content: "Two.", scope: "project", kind: "goal", sources: [userSource] });
+    expect([one.id, two.id]).toEqual(["prop-1", "prop-2"]);
+    first.purge(two.id); // purge the highest-id record
+    first.close();
+
+    // The reopened record scan sees only prop-1, but the persisted high-water mark
+    // keeps the counter past prop-2, so a new remember does not reuse the purged id.
+    const second = openSpace(path);
+    const next = second.remember({ content: "Three.", scope: "project", kind: "goal", sources: [userSource] });
+    expect(next.id).toBe("prop-3");
+    expect(second.get("prop-2")).toBeUndefined();
+    second.close();
+  });
+
   it("preserves the revision so a stale optimistic write is rejected after a reopen", () => {
     const path = dbPath();
     const first = openSpace(path);

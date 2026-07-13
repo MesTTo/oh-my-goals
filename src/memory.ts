@@ -361,6 +361,7 @@ export class MemorySpace {
   private readonly store: DurableStore;
   private readonly now: () => string;
   private readonly idPrefix: string;
+  private readonly idPattern: RegExp;
   private readonly repository: string;
   private readonly session: string;
   private counter = 0;
@@ -368,6 +369,7 @@ export class MemorySpace {
   constructor(options: MemorySpaceOptions = {}) {
     this.now = options.now ?? (() => new Date().toISOString());
     this.idPrefix = options.idPrefix ?? "prop";
+    this.idPattern = new RegExp(`^${escapeRegExp(this.idPrefix)}-(\\d+)$`);
     this.store = options.store ?? new InMemoryDurableStore();
     this.repository = options.repository ?? "local";
     this.session = options.session ?? "default";
@@ -620,11 +622,12 @@ export class MemorySpace {
   // --- construction and durable rebuild ---
 
   // Load in-scope records from the durable store and rebuild the live MeTTa facts.
-  // The counter is seeded past the highest generated id across every record, not
-  // only the loaded ones, so a new id never collides with an out-of-scope record.
+  // The counter is seeded past the highest generated id across every record and the
+  // store's persisted high-water mark, so a new id never collides with an
+  // out-of-scope record nor reuses a purged id after a restart.
   private load(): void {
     const all = this.store.allRecords();
-    this.counter = this.maxGeneratedCounter(all);
+    this.counter = Math.max(this.maxGeneratedCounter(all), this.store.idCounter(this.idPrefix));
     for (const persisted of all) {
       if (!this.inScope(persisted.scope, persisted.repository, persisted.session)) continue;
       const record = persistedToMutable(persisted);
@@ -648,13 +651,18 @@ export class MemorySpace {
   }
 
   private maxGeneratedCounter(records: readonly PersistedRecord[]): number {
-    const pattern = new RegExp(`^${escapeRegExp(this.idPrefix)}-(\\d+)$`);
     let max = 0;
     for (const record of records) {
-      const match = pattern.exec(record.id);
-      if (match !== null) max = Math.max(max, Number(match[1]));
+      max = Math.max(max, this.idOrdinal(record.id));
     }
     return max;
+  }
+
+  // The numeric suffix of a `<prefix>-<n>` id, or 0 for a caller-supplied id that
+  // does not follow the generated form.
+  private idOrdinal(id: string): number {
+    const match = this.idPattern.exec(id);
+    return match === null ? 0 : Number(match[1]);
   }
 
   // --- internal encoding and query helpers ---
@@ -727,6 +735,9 @@ export class MemorySpace {
     }
     this.records.set(record.id, record);
     this.rebuildFacts(record);
+    // Raise the durable high-water mark so purging this record later cannot free
+    // its id for a colliding reuse after a restart.
+    this.store.bumpIdCounter(this.idPrefix, Math.max(this.counter, this.idOrdinal(record.id)));
   }
 
   private reassignGeneratedId(record: MutableRecord): void {
