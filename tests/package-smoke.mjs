@@ -148,6 +148,7 @@ try {
     "semantic_memory",
     "skill_installer",
     "snars",
+    "solve",
     "transformers_embedding",
     "truth_value",
     "vector_index",

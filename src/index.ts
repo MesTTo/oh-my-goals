@@ -28,6 +28,7 @@ export * from "./candidates.js";
 export * from "./semantic.js";
 export * from "./semantic_memory.js";
 export * from "./query.js";
+export * from "./solve.js";
 export * from "./explain.js";
 export * from "./execute.js";
 export * from "./json.js";

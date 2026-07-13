@@ -95,6 +95,10 @@ export interface DeriveInput {
   readonly scope?: MemoryScope;
   readonly kind?: MemoryKind;
   readonly tree?: string;
+  /** JSON of the structured SH tree, so a derived conclusion can be matched and linked. */
+  readonly shTree?: string;
+  /** Sentence polarity from the parse, persisted for candidate re-decomposition. */
+  readonly polarity?: string;
   readonly recordedAt?: string;
   readonly id?: string;
 }
@@ -414,6 +418,8 @@ export class MemorySpace {
       "scope",
       "kind",
       "tree",
+      "shTree",
+      "polarity",
       "recordedAt",
       "id",
     ]);
@@ -432,8 +438,8 @@ export class MemorySpace {
       kind,
       content,
       tree: input.tree,
-      shTree: undefined,
-      polarity: undefined,
+      shTree: input.shTree,
+      polarity: input.polarity,
       recordedAt: input.recordedAt,
       id: input.id,
     });
