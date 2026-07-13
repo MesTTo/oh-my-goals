@@ -30,6 +30,7 @@ export interface SemanticConfig {
   readonly dimensions: number | null;
   readonly index: string;
   readonly defaultTopK: number;
+  readonly recommendedThreshold: number | null;
 }
 
 /** Map a memory scope to a distinct vector-index space id. */
@@ -68,6 +69,11 @@ export class SemanticBackend {
 
   get index(): VectorIndex {
     return this.#index;
+  }
+
+  /** The active provider's measured query threshold, or null when none separates. */
+  get recommendedThreshold(): number | null {
+    return this.#embedding.recommendedThreshold;
   }
 
   async #embed(text: string): Promise<number[]> {
@@ -152,6 +158,7 @@ export class SemanticBackend {
       dimensions: this.#embedding.dimensions,
       index: this.#indexName,
       defaultTopK: DEFAULT_TOP_K,
+      recommendedThreshold: this.#embedding.recommendedThreshold,
     };
   }
 }

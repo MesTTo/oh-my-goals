@@ -147,14 +147,20 @@ export class SemanticMemory {
 
   /** Top active propositions matching a query in one scope. A proposition
    * decomposes into several candidates; this keeps its best-scoring one and, like
-   * mettabase's semmatch gate, requires a positive score even with no threshold. */
+   * mettabase's semmatch gate, requires a positive score even with no threshold.
+   * When the caller does not set a threshold, the provider's measured one applies. */
   async search(
     query: string,
     scope: MemoryScope,
-    options: SemanticOptions = semanticOptions(),
+    options: Partial<SemanticOptions> = {},
   ): Promise<SemanticHit[]> {
     if (this.#backend === undefined) return [];
-    const candidates = await this.#backend.search(this.#spaceId(scope), query, options);
+    const resolved = semanticOptions({
+      ...(options.topK !== undefined ? { topK: options.topK } : {}),
+      threshold: options.threshold !== undefined ? options.threshold : this.#backend.recommendedThreshold,
+      ...(options.filters !== undefined ? { filters: options.filters } : {}),
+    });
+    const candidates = await this.#backend.search(this.#spaceId(scope), query, resolved);
     const best = new Map<string, SemanticHit>();
     for (const candidate of candidates) {
       if (candidate.edgeId === null || candidate.score <= 0) continue;

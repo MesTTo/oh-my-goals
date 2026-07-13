@@ -306,6 +306,7 @@ describe("semantic backend", () => {
       dimensions: 256,
       index: "InMemory",
       defaultTopK: 10,
+      recommendedThreshold: null,
     });
   });
 

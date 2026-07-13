@@ -17,6 +17,10 @@ export interface EmbeddingProvider {
   readonly name: string;
   readonly model: string;
   readonly dimensions: number | null;
+  /** Cosine cutoff that best separates relevant from unrelated for this provider's
+   * score scale, measured over the retrieval fixture, or null when no fixed cutoff
+   * separates them and retrieval relies on the positive-score gate and top-k. */
+  readonly recommendedThreshold: number | null;
   embed(text: string): number[] | Promise<number[]>;
 }
 
@@ -58,6 +62,10 @@ export class TokenEmbeddingProvider implements EmbeddingProvider {
   readonly name = "Local";
   readonly model = "token-hash";
   readonly dimensions: number;
+  // Over the controlled-English retrieval fixture, token-overlap cosines for
+  // relevant and unrelated pairs coincide (both median ~0.25), so no fixed cutoff
+  // separates them. Retrieval leans on the positive-score gate and top-k instead.
+  readonly recommendedThreshold = null;
 
   constructor(dimensions = 256) {
     if (!Number.isInteger(dimensions) || dimensions <= 0) {

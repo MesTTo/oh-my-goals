@@ -22,6 +22,7 @@ export * from "./durable_store.js";
 export * from "./hyperbase.js";
 export * from "./ingest.js";
 export * from "./embedding.js";
+export * from "./transformers_embedding.js";
 export * from "./vector_index.js";
 export * from "./candidates.js";
 export * from "./semantic.js";

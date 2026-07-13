@@ -147,6 +147,7 @@ try {
     "semantic_memory",
     "skill_installer",
     "snars",
+    "transformers_embedding",
     "truth_value",
     "vector_index",
   ];
