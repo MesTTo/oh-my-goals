@@ -16,11 +16,10 @@ import {
   type ShNode,
 } from "../src/hyperbase.js";
 import { ingestStatements } from "../src/ingest.js";
-import { createMemorySpace } from "../src/memory.js";
+import { SemanticMemory } from "../src/semantic_memory.js";
 import { TokenEmbeddingProvider } from "../src/embedding.js";
 import { InMemoryVectorIndex } from "../src/vector_index.js";
-import { propositionIdsOf } from "../src/candidates.js";
-import { SemanticBackend, semanticOptions } from "../src/semantic.js";
+import { SemanticBackend } from "../src/semantic.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const FAKE_WORKER = join(ROOT, "tests", "fixtures", "hb-fake-worker.mjs");
@@ -258,7 +257,7 @@ describe("controlled-English contract", () => {
 
 describe("memory ingestion through the parser (fake worker)", () => {
   it("stores an admissible declarative with its real tree and marks it active", async () => {
-    const memory = createMemorySpace();
+    const memory = await SemanticMemory.open();
     const [result] = await ingestStatements(fake("ok"), memory, [
       {
         content: "The subject adds the object.",
@@ -276,7 +275,7 @@ describe("memory ingestion through the parser (fake worker)", () => {
   });
 
   it("refuses to store a question as an assertion", async () => {
-    const memory = createMemorySpace();
+    const memory = await SemanticMemory.open();
     const [result] = await ingestStatements(fake("interrogative"), memory, [
       {
         content: "Which action preserves it?",
@@ -291,7 +290,7 @@ describe("memory ingestion through the parser (fake worker)", () => {
   });
 
   it("stores an imperative as a goal but refuses it for other kinds", async () => {
-    const memory = createMemorySpace();
+    const memory = await SemanticMemory.open();
     const asGoal = await ingestStatements(fake("imperative"), memory, [
       {
         content: "Upgrade the package.",
@@ -317,7 +316,7 @@ describe("memory ingestion through the parser (fake worker)", () => {
   });
 
   it("returns rewrite feedback and stores nothing for coordination", async () => {
-    const memory = createMemorySpace();
+    const memory = await SemanticMemory.open();
     const [result] = await ingestStatements(fake("coordination"), memory, [
       {
         content: "The build passes and the tests fail.",
@@ -334,30 +333,25 @@ describe("memory ingestion through the parser (fake worker)", () => {
   });
 
   it("indexes a stored proposition's candidates into a semantic backend", async () => {
-    const memory = createMemorySpace();
     const backend = new SemanticBackend(new TokenEmbeddingProvider(256), new InMemoryVectorIndex());
-    const [result] = await ingestStatements(
-      fake("ok"),
-      memory,
-      [
-        {
-          content: "The subject adds the object.",
-          scope: "project",
-          kind: "observation",
-          sources: [{ type: "tool", reference: "review" }],
-        },
-      ],
-      { backend, identity: { repositoryId: "repo-1" } },
-    );
+    const memory = await SemanticMemory.open({ backend, repository: "repo-1" });
+    const [result] = await ingestStatements(fake("ok"), memory, [
+      {
+        content: "The subject adds the object.",
+        scope: "project",
+        kind: "observation",
+        sources: [{ type: "tool", reference: "review" }],
+      },
+    ]);
     expect(result!.stored).toBe(true);
     if (result!.stored) {
-      const hits = await backend.search("omg:project:repo-1", "the subject adds the object", semanticOptions());
-      expect(propositionIdsOf(hits.map((h) => h.atomId!))).toContain(result!.proposition.id);
+      const hits = await memory.search("the subject adds the object", "project");
+      expect(hits.map((hit) => hit.proposition.id)).toContain(result!.proposition.id);
     }
   });
 
   it("validates ingestion input", async () => {
-    const memory = createMemorySpace();
+    const memory = await SemanticMemory.open();
     await expect(
       ingestStatements(fake("ok"), memory, [
         { content: "  ", scope: "project", kind: "observation", sources: [] },
@@ -470,7 +464,7 @@ describe.skipIf(!realParserConfigured)("real AlphaBeta parser fixtures", () => {
   });
 
   it("ingests a real declarative into memory and rejects a real question", async () => {
-    const memory = createMemorySpace();
+    const memory = await SemanticMemory.open();
     const results = await ingestStatements(parser, memory, [
       {
         content: "The user requires that the public API remains compatible.",

@@ -16,7 +16,7 @@
   },
   "homepage": "https://github.com/MesTTo/oh-my-goals#readme",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13.0"
   },
   "bin": {
     "oh-my-goals": "./dist/cli.js",

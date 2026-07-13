@@ -107,6 +107,11 @@ export class SemanticBackend {
     this.#index.delete(spaceId, atomIds);
   }
 
+  /** Remove every candidate that decomposed from the given propositions. */
+  removeByEdge(spaceId: string, edgeIds: readonly string[]): void {
+    this.#index.deleteByEdge(spaceId, edgeIds);
+  }
+
   /** Top semantic candidates for a query in one space (generator mode). */
   async search(
     spaceId: string,

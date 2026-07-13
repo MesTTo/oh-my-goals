@@ -62,11 +62,15 @@ export interface EmbeddedCandidate {
   readonly vector: readonly number[];
 }
 
-/** Insert-or-replace, search, and per-candidate delete over embedded candidates. */
+/** Insert-or-replace, search, and delete over embedded candidates. */
 export interface VectorIndex {
   upsert(entries: readonly EmbeddedCandidate[]): void;
   search(query: VectorSearchQuery): SemanticCandidate[];
+  /** Remove specific candidates by their atom id. */
   delete(spaceId: string, atomIds: readonly string[]): void;
+  /** Remove every candidate that decomposed from the given propositions. Purge
+   * and retraction key on the proposition (edge) id, not each candidate id. */
+  deleteByEdge(spaceId: string, edgeIds: readonly string[]): void;
 }
 
 const FILTERABLE_ATTRIBUTES = new Set([
@@ -145,10 +149,23 @@ export class InMemoryVectorIndex implements VectorIndex {
   delete(spaceId: string, atomIds: readonly string[]): void {
     if (atomIds.length === 0) return;
     const remove = new Set(atomIds);
-    this.#rows = this.#rows.filter(
-      (row) => !(row.candidate.spaceId === spaceId && row.candidate.atomId !== null &&
-        remove.has(row.candidate.atomId)),
+    this.#removeWhere(
+      (candidate) =>
+        candidate.spaceId === spaceId && candidate.atomId !== null && remove.has(candidate.atomId),
     );
+  }
+
+  deleteByEdge(spaceId: string, edgeIds: readonly string[]): void {
+    if (edgeIds.length === 0) return;
+    const remove = new Set(edgeIds);
+    this.#removeWhere(
+      (candidate) =>
+        candidate.spaceId === spaceId && candidate.edgeId !== null && remove.has(candidate.edgeId),
+    );
+  }
+
+  #removeWhere(matches: (candidate: SemanticCandidate) => boolean): void {
+    this.#rows = this.#rows.filter((row) => !matches(row.candidate));
     this.#reindex();
   }
 

@@ -181,6 +181,26 @@ describe("in-memory vector index", () => {
     expect(index.size()).toBe(1);
   });
 
+  it("deletes every candidate of a proposition by edge id, scoped to the space", () => {
+    const index = new InMemoryVectorIndex();
+    index.upsert([
+      embedded({ atomId: "p1:edge", edgeId: "p1", text: "cat" }),
+      embedded({ atomId: "p1:arg:s:0", edgeId: "p1", text: "the cat" }),
+      embedded({ atomId: "p2:edge", edgeId: "p2", text: "dog" }),
+      embedded({ atomId: "p1:edge", edgeId: "p1", text: "cat", spaceId: "omg:project:other" }),
+    ]);
+    index.deleteByEdge("omg:project:x", ["p1"]);
+    expect(index.size()).toBe(2);
+    const remaining = index.search({
+      spaceId: "omg:project:x",
+      vector: EMB.embed("cat dog"),
+      topK: 10,
+      threshold: null,
+      filters: {},
+    });
+    expect(remaining.map((c) => c.edgeId)).toEqual(["p2"]);
+  });
+
   it("requires a positive top-k", () => {
     const index = new InMemoryVectorIndex();
     expect(() =>

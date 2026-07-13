@@ -91,6 +91,18 @@ They also execute generic numeric kernels and structural transforms, including a
 
 Execution remains outside the reasoning module. A `recommended` result is not authority to perform an action. `executeDecision` requires a caller-supplied action map and rejects blocked decisions. Automatic callers must also check `automaticExecutionAllowed`, the tie state, action availability, and the authority already granted by the user.
 
+## Memory
+
+Memory stores controlled-English propositions with provenance, lifecycle, and derivation. Visibility, active-source aggregation, retraction, supersession, and reverse proof invalidation are decided by the `gc-mem-*` relations in `oh-my-goals.metta`. A proposition is active when its state is active, it has an active supporting assertion or a valid proof, and it is not superseded.
+
+Statements enter through the real HyperBase parser (`src/hyperbase.ts`), which returns nested typed SH trees, roots, speech-act mood, and coverage. Ingestion stores a statement only when it parses into one faithful proposition whose mood suits its kind: a question is never an assertion, and an imperative is stored only as a goal. Rejections return controlled-English rewrite feedback and write nothing.
+
+The MeTTa space is the live reasoning state; a durable store keeps it across restarts. `MemorySpace` (`src/memory.ts`) validates caller data, writes ground facts, reads visibility back, and writes every mutation through to the store in one transaction. `DurableStore` (`src/durable_store.ts`) has a SQLite WAL implementation, so several stdio MCP processes can share one local memory with concurrent readers and a serialized writer, and an in-memory implementation for tests. On construction the space loads the records in scope and rebuilds the live facts from them; generated ids continue past the highest stored id, and a caller-supplied id that already exists is rejected.
+
+Scope isolation follows the identity a space opens with. User memory is global; project and derived memory belong to a repository; session memory belongs to one session in one repository. `retract` and `supersede` preserve history and report the dependent conclusions they invalidate. `purge` is the permanent form: it deletes the record, removes the live facts, and, with SQLite `secure_delete` and a WAL checkpoint, scrubs the content so it cannot be recovered from the database, its journal, or a rebuilt space.
+
+Natural-language retrieval ports mettabase's `semmatch`. One proposition decomposes into searchable candidates for its sentence, its typed edge, each subtree, connector, and role-bearing argument (`src/candidates.ts`), each embedded and kept in a per-scope vector index (`src/vector_index.ts`, `src/embedding.ts`). Because embedding is asynchronous while the record space is synchronous, `SemanticMemory` (`src/semantic_memory.ts`) is the async facade: it reconciles the index against the active set after every mutation, drops candidates for a proposition that becomes inactive or is purged, and rebuilds the index from the stored SH trees on open, so search survives a restart without re-running the parser. A search returns candidates whose canonical proposition is still active and in scope. Semantic similarity is retrieval evidence, not a proof.
+
 ## Agent integration
 
 The packaged Agent Skill gives Claude Code, Codex, and OpenCode the same CLI protocol. Each agent writes the same strict JSON input and reads the same decision receipt. The skill installer changes only the destination layout for each tool.

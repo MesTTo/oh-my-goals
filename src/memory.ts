@@ -1,14 +1,22 @@
 // A live MeTTa memory of controlled-English propositions with provenance,
-// lifecycle, and derivation.
+// lifecycle, and derivation, backed by a durable record store.
 //
 // Visibility, active-source aggregation, retraction, supersession, and reverse
 // proof invalidation are decided by the gc-mem-* relations in oh-my-goals.metta.
 // This host validates caller data, encodes it as ground facts in a memory space,
-// and reads visibility and receipts back. It also keeps a metadata record mirror
-// of what it wrote so it can return receipts without re-deriving them. A later
-// phase replaces that mirror with a durable store that rebuilds the live space on
-// startup; the MeTTa space stays the single authority for what is visible.
+// and reads visibility and receipts back. A durable store (SQLite in production,
+// in-memory for tests) persists the records; on construction the space loads the
+// records in scope and rebuilds the live MeTTa facts from them. The MeTTa space
+// stays the single authority for what is visible; the store is only the log the
+// space rebuilds from. Every mutation writes through to the store so a restart
+// recovers the same state.
 
+import {
+  IdConflictError,
+  InMemoryDurableStore,
+  type DurableStore,
+  type PersistedRecord,
+} from "./durable_store.js";
 import {
   createGoalChainerMetta,
   mettaCall,
@@ -72,6 +80,10 @@ export interface RememberInput {
   readonly kind: MemoryKind;
   readonly sources: readonly MemorySourceInput[];
   readonly tree?: string;
+  /** JSON of the structured SH tree, persisted so semantic candidates re-decompose on load. */
+  readonly shTree?: string;
+  /** Sentence polarity from the parse, persisted for candidate re-decomposition. */
+  readonly polarity?: string;
   readonly recordedAt?: string;
   readonly id?: string;
 }
@@ -96,6 +108,8 @@ export interface StoredProposition {
   readonly revision: number;
   readonly recordedAt: string;
   readonly tree: string | undefined;
+  readonly shTree: string | undefined;
+  readonly polarity: string | undefined;
   readonly sources: readonly StoredSource[];
   readonly derivations: readonly StoredDerivation[];
   readonly supersedes: string | undefined;
@@ -107,6 +121,14 @@ export interface RemovalReceipt {
   readonly id: string;
   readonly mode: "retract";
   readonly revision: number;
+  readonly proposition: StoredProposition;
+  readonly invalidated: readonly string[];
+}
+
+export interface PurgeReceipt {
+  readonly ok: true;
+  readonly id: string;
+  readonly mode: "purge";
   readonly proposition: StoredProposition;
   readonly invalidated: readonly string[];
 }
@@ -142,6 +164,7 @@ export interface NotFoundError {
 }
 
 export type RetractResult = RemovalReceipt | StaleRevisionError | NotFoundError;
+export type PurgeResult = PurgeReceipt | StaleRevisionError | NotFoundError;
 export type RetractSourceResult =
   | SourceRemovalReceipt
   | StaleRevisionError
@@ -167,6 +190,10 @@ interface MutableRecord {
   revision: number;
   recordedAt: string;
   tree: string | undefined;
+  shTree: string | undefined;
+  polarity: string | undefined;
+  repository: string;
+  session: string;
   sources: MutableSource[];
   derivations: StoredDerivation[];
   supersedes: string | undefined;
@@ -178,6 +205,12 @@ export interface MemorySpaceOptions {
   readonly now?: () => string;
   /** Prefix for generated proposition identifiers. */
   readonly idPrefix?: string;
+  /** Durable backing store. Defaults to a non-persistent in-memory store. */
+  readonly store?: DurableStore;
+  /** Repository identity; isolates project, derived, and session scopes on load. */
+  readonly repository?: string;
+  /** Session identity; isolates session-scope records between sessions. */
+  readonly session?: string;
 }
 
 function nonblankString(value: unknown, path: string): string {
@@ -221,8 +254,26 @@ function validateSources(value: unknown): MemorySourceInput[] {
   });
 }
 
-function freezeProposition(record: MutableRecord): StoredProposition {
-  return Object.freeze({
+// The scalar fields shared by the working, stored, and persisted record shapes.
+// Extracted so adding a field touches one list, not three.
+type RecordScalars = Pick<
+  MutableRecord,
+  | "id"
+  | "scope"
+  | "kind"
+  | "content"
+  | "state"
+  | "revision"
+  | "recordedAt"
+  | "tree"
+  | "shTree"
+  | "polarity"
+  | "supersedes"
+  | "supersededBy"
+>;
+
+function scalarFields(record: MutableRecord): RecordScalars {
+  return {
     id: record.id,
     scope: record.scope,
     kind: record.kind,
@@ -231,7 +282,32 @@ function freezeProposition(record: MutableRecord): StoredProposition {
     revision: record.revision,
     recordedAt: record.recordedAt,
     tree: record.tree,
-    sources: Object.freeze(record.sources.map((source) => Object.freeze({ ...source }))),
+    shTree: record.shTree,
+    polarity: record.polarity,
+    supersedes: record.supersedes,
+    supersededBy: record.supersededBy,
+  };
+}
+
+function copySource(source: MutableSource): MutableSource {
+  return {
+    assertionId: source.assertionId,
+    type: source.type,
+    reference: source.reference,
+    strength: source.strength,
+    confidence: source.confidence,
+    state: source.state,
+  };
+}
+
+function copyDerivation(derivation: StoredDerivation): StoredDerivation {
+  return { rule: derivation.rule, premises: [...derivation.premises] };
+}
+
+function freezeProposition(record: MutableRecord): StoredProposition {
+  return Object.freeze({
+    ...scalarFields(record),
+    sources: Object.freeze(record.sources.map((source) => Object.freeze(copySource(source)))),
     derivations: Object.freeze(
       record.derivations.map((derivation) =>
         Object.freeze({
@@ -240,22 +316,58 @@ function freezeProposition(record: MutableRecord): StoredProposition {
         }),
       ),
     ),
+  });
+}
+
+function persistedToMutable(record: PersistedRecord): MutableRecord {
+  return {
+    id: record.id,
+    scope: assertMember(record.scope, MEMORY_SCOPES, "stored scope"),
+    kind: assertMember(record.kind, MEMORY_KINDS, "stored kind"),
+    content: record.content,
+    state: assertMember(record.state, MEMORY_STATES, "stored state"),
+    revision: record.revision,
+    recordedAt: record.recordedAt,
+    tree: record.tree,
+    shTree: record.shTree,
+    polarity: record.polarity,
+    repository: record.repository,
+    session: record.session,
+    sources: record.sources.map(copySource),
+    derivations: record.derivations.map(copyDerivation),
     supersedes: record.supersedes,
     supersededBy: record.supersededBy,
-  });
+  };
+}
+
+function mutableToPersisted(record: MutableRecord): PersistedRecord {
+  return {
+    ...scalarFields(record),
+    repository: record.repository,
+    session: record.session,
+    sources: record.sources.map(copySource),
+    derivations: record.derivations.map(copyDerivation),
+  };
 }
 
 /** A live memory of propositions whose visibility is decided in native MeTTa. */
 export class MemorySpace {
   private readonly db: GoalChainerMetta = createGoalChainerMetta();
   private readonly records = new Map<string, MutableRecord>();
+  private readonly store: DurableStore;
   private readonly now: () => string;
   private readonly idPrefix: string;
+  private readonly repository: string;
+  private readonly session: string;
   private counter = 0;
 
   constructor(options: MemorySpaceOptions = {}) {
     this.now = options.now ?? (() => new Date().toISOString());
     this.idPrefix = options.idPrefix ?? "prop";
+    this.store = options.store ?? new InMemoryDurableStore();
+    this.repository = options.repository ?? "local";
+    this.session = options.session ?? "default";
+    this.load();
   }
 
   /** Store one controlled-English proposition with at least one source. */
@@ -267,6 +379,8 @@ export class MemorySpace {
       "kind",
       "sources",
       "tree",
+      "shTree",
+      "polarity",
       "recordedAt",
       "id",
     ]);
@@ -275,15 +389,18 @@ export class MemorySpace {
     const kind = assertMember(input.kind, MEMORY_KINDS, "kind");
     const sources = validateSources(input.sources);
 
-    const record = this.createRecord({
+    const record = this.buildRecord({
       scope,
       kind,
       content,
       tree: input.tree,
+      shTree: input.shTree,
+      polarity: input.polarity,
       recordedAt: input.recordedAt,
       id: input.id,
     });
-    for (const source of sources) this.appendSource(record, source);
+    for (const source of sources) this.attachSource(record, source);
+    this.commitNew(record, input.id !== undefined);
     return freezeProposition(record);
   }
 
@@ -310,15 +427,18 @@ export class MemorySpace {
         ? "derived-conclusion"
         : assertMember(input.kind, MEMORY_KINDS, "kind");
 
-    const record = this.createRecord({
+    const record = this.buildRecord({
       scope,
       kind,
       content,
       tree: input.tree,
+      shTree: undefined,
+      polarity: undefined,
       recordedAt: input.recordedAt,
       id: input.id,
     });
-    this.appendDerivation(record, rule, premises);
+    record.derivations.push({ rule, premises });
+    this.commitNew(record, input.id !== undefined);
     return freezeProposition(record);
   }
 
@@ -329,6 +449,7 @@ export class MemorySpace {
     const validated = this.validatePremises(premises);
     this.appendDerivation(record, nonblankString(rule, "rule"), validated);
     this.writeState(record, record.state);
+    this.persist(record);
     return freezeProposition(record);
   }
 
@@ -342,8 +463,10 @@ export class MemorySpace {
     if ("ok" in loaded) return loaded;
     const record = loaded;
     const [validated] = validateSources([source]);
-    this.appendSource(record, validated!);
+    this.attachSource(record, validated!);
+    this.writeSourceFacts(record, record.sources[record.sources.length - 1]!);
     this.writeState(record, record.state);
+    this.persist(record);
     return freezeProposition(record);
   }
 
@@ -357,6 +480,11 @@ export class MemorySpace {
   get(id: string): StoredProposition | undefined {
     const record = this.records.get(id);
     return record === undefined ? undefined : freezeProposition(record);
+  }
+
+  /** Release the durable store. The live MeTTa space is discarded with the instance. */
+  close(): void {
+    this.store.close();
   }
 
   /** Every active proposition identifier across all scopes. */
@@ -388,6 +516,7 @@ export class MemorySpace {
 
     const before = new Set(this.activePropositions());
     this.writeState(record, "retracted");
+    this.persist(record);
     const invalidated = this.cascade(before, id);
     return {
       ok: true,
@@ -397,6 +526,23 @@ export class MemorySpace {
       proposition: freezeProposition(record),
       invalidated,
     };
+  }
+
+  /** Permanently delete a proposition and its content, reporting the dependants it invalidates.
+   * Unlike retract, no history survives: the record is removed from the store, the live space,
+   * and its content is scrubbed so it cannot be recovered. */
+  purge(id: string, expectedRevision?: number): PurgeResult {
+    const loaded = this.loadForMutation(id, expectedRevision);
+    if ("ok" in loaded) return loaded;
+    const record = loaded;
+
+    const before = new Set(this.activePropositions());
+    const proposition = freezeProposition(record);
+    this.store.purge(id);
+    this.removeFacts(record);
+    this.records.delete(id);
+    const invalidated = this.cascade(before, id);
+    return { ok: true, id, mode: "purge", proposition, invalidated };
   }
 
   /** Retract one supporting assertion. The proposition survives if another stays active. */
@@ -423,6 +569,7 @@ export class MemorySpace {
       source.state = "retracted";
     }
     this.writeState(record, record.state);
+    this.persist(record);
     const invalidated = this.cascade(before, id);
     return {
       ok: true,
@@ -444,23 +591,100 @@ export class MemorySpace {
     if ("ok" in loaded) return loaded;
     const oldRecord = loaded;
 
-    const before = new Set(this.activePropositions());
-    const created = this.remember(replacement);
-    const newRecord = this.records.get(created.id)!;
-    newRecord.supersedes = oldId;
-    oldRecord.supersededBy = created.id;
-    this.db.add(mettaCall("MemorySupersedes", mettaSymbol(created.id), mettaSymbol(oldId)));
-    this.writeState(oldRecord, "superseded");
-    const invalidated = this.cascade(before, oldId);
-    return {
-      ok: true,
-      superseded: freezeProposition(oldRecord),
-      replacement: freezeProposition(newRecord),
-      invalidated,
-    };
+    return this.store.transaction(() => {
+      const before = new Set(this.activePropositions());
+      const created = this.remember(replacement);
+      const newRecord = this.records.get(created.id)!;
+      newRecord.supersedes = oldId;
+      oldRecord.supersededBy = created.id;
+      this.db.add(mettaCall("MemorySupersedes", mettaSymbol(created.id), mettaSymbol(oldId)));
+      this.writeState(oldRecord, "superseded");
+      this.persist(newRecord);
+      this.persist(oldRecord);
+      const invalidated = this.cascade(before, oldId);
+      return {
+        ok: true,
+        superseded: freezeProposition(oldRecord),
+        replacement: freezeProposition(newRecord),
+        invalidated,
+      };
+    });
+  }
+
+  // --- construction and durable rebuild ---
+
+  // Load in-scope records from the durable store and rebuild the live MeTTa facts.
+  // The counter is seeded past the highest generated id across every record, not
+  // only the loaded ones, so a new id never collides with an out-of-scope record.
+  private load(): void {
+    const all = this.store.allRecords();
+    this.counter = this.maxGeneratedCounter(all);
+    for (const persisted of all) {
+      if (!this.inScope(persisted.scope, persisted.repository, persisted.session)) continue;
+      const record = persistedToMutable(persisted);
+      this.records.set(record.id, record);
+      this.rebuildFacts(record);
+    }
+  }
+
+  private inScope(scope: string, repository: string, session: string): boolean {
+    switch (scope) {
+      case "user":
+        return true;
+      case "project":
+      case "derived":
+        return repository === this.repository;
+      case "session":
+        return repository === this.repository && session === this.session;
+      default:
+        return false;
+    }
+  }
+
+  private maxGeneratedCounter(records: readonly PersistedRecord[]): number {
+    const pattern = new RegExp(`^${escapeRegExp(this.idPrefix)}-(\\d+)$`);
+    let max = 0;
+    for (const record of records) {
+      const match = pattern.exec(record.id);
+      if (match !== null) max = Math.max(max, Number(match[1]));
+    }
+    return max;
   }
 
   // --- internal encoding and query helpers ---
+
+  private buildRecord(fields: {
+    scope: MemoryScope;
+    kind: MemoryKind;
+    content: string;
+    tree: string | undefined;
+    shTree: string | undefined;
+    polarity: string | undefined;
+    recordedAt: string | undefined;
+    id: string | undefined;
+  }): MutableRecord {
+    const tree = fields.tree === undefined ? undefined : nonblankString(fields.tree, "tree");
+    const recordedAt =
+      fields.recordedAt === undefined ? this.now() : nonblankString(fields.recordedAt, "recordedAt");
+    return {
+      id: this.resolveNewId(fields.id),
+      scope: fields.scope,
+      kind: fields.kind,
+      content: fields.content,
+      state: "active",
+      revision: 1,
+      recordedAt,
+      tree,
+      shTree: fields.shTree,
+      polarity: fields.polarity,
+      repository: this.repository,
+      session: this.session,
+      sources: [],
+      derivations: [],
+      supersedes: undefined,
+      supersededBy: undefined,
+    };
+  }
 
   private resolveNewId(requested: string | undefined): string {
     if (requested !== undefined) {
@@ -468,12 +692,42 @@ export class MemorySpace {
       if (this.records.has(id)) throw new RangeError(`proposition id already exists: ${id}`);
       return id;
     }
+    return this.nextGeneratedId();
+  }
+
+  private nextGeneratedId(): string {
     let id: string;
     do {
       this.counter += 1;
       id = `${this.idPrefix}-${this.counter}`;
     } while (this.records.has(id));
     return id;
+  }
+
+  // Persist a freshly built record. A generated id that collides with an
+  // out-of-scope record (a concurrent client) is regenerated; a caller-supplied
+  // id that collides is a hard error. Only then are the live facts written.
+  private commitNew(record: MutableRecord, userProvidedId: boolean): void {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        this.store.insert(mutableToPersisted(record));
+        break;
+      } catch (error) {
+        if (!(error instanceof IdConflictError)) throw error;
+        if (userProvidedId) throw new RangeError(`proposition id already exists: ${record.id}`);
+        if (attempt > 100000) throw error;
+        this.reassignGeneratedId(record);
+      }
+    }
+    this.records.set(record.id, record);
+    this.rebuildFacts(record);
+  }
+
+  private reassignGeneratedId(record: MutableRecord): void {
+    record.id = this.nextGeneratedId();
+    record.sources.forEach((source, index) => {
+      source.assertionId = `${record.id}-s${index + 1}`;
+    });
   }
 
   private validatePremises(value: unknown): string[] {
@@ -488,34 +742,63 @@ export class MemorySpace {
     });
   }
 
-  private createRecord(fields: {
-    scope: MemoryScope;
-    kind: MemoryKind;
-    content: string;
-    tree: string | undefined;
-    recordedAt: string | undefined;
-    id: string | undefined;
-  }): MutableRecord {
-    const tree = fields.tree === undefined ? undefined : nonblankString(fields.tree, "tree");
-    const recordedAt =
-      fields.recordedAt === undefined ? this.now() : nonblankString(fields.recordedAt, "recordedAt");
-    const record: MutableRecord = {
-      id: this.resolveNewId(fields.id),
-      scope: fields.scope,
-      kind: fields.kind,
-      content: fields.content,
+  // Attach a source to the record in memory. The MeTTa facts are written by
+  // rebuildFacts on create and by writeSourceFacts on a later addSource.
+  private attachSource(record: MutableRecord, source: MemorySourceInput): void {
+    record.sources.push({
+      assertionId: `${record.id}-s${record.sources.length + 1}`,
+      type: source.type,
+      reference: source.reference,
+      strength: source.strength ?? 1,
+      confidence: source.confidence ?? 1,
       state: "active",
-      revision: 1,
-      recordedAt,
-      tree,
-      sources: [],
-      derivations: [],
-      supersedes: undefined,
-      supersededBy: undefined,
-    };
-    this.records.set(record.id, record);
+    });
+  }
+
+  // Write every ground fact for a record: proposition, content, state, timestamp,
+  // tree, each source, each derivation, and supersession. Used on create and on
+  // durable rebuild, so it must honor the record's actual state, not assume active.
+  private rebuildFacts(record: MutableRecord): void {
     this.writePropositionFacts(record);
-    return record;
+    for (const source of record.sources) this.writeSourceFacts(record, source);
+    for (const derivation of record.derivations) this.writeDerivationFacts(record, derivation);
+    if (record.supersedes !== undefined) {
+      this.db.add(mettaCall("MemorySupersedes", mettaSymbol(record.id), mettaSymbol(record.supersedes)));
+    }
+  }
+
+  // Remove every ground fact for a record. Mirrors rebuildFacts so purge leaves no
+  // trace of the proposition in the live space. GoalChainerMetta.remove takes one
+  // atom at a time, so each fact is removed with its own call.
+  private removeFacts(record: MutableRecord): void {
+    this.db.remove(mettaCall("MemoryProposition", mettaSymbol(record.id), mettaSymbol(record.scope), mettaSymbol(record.kind)));
+    this.db.remove(mettaCall("MemoryContent", mettaSymbol(record.id), mettaString(record.content)));
+    this.db.remove(mettaCall("MemoryState", mettaSymbol(record.id), mettaSymbol(record.state), mettaInteger(record.revision)));
+    this.db.remove(mettaCall("MemoryRecordedAt", mettaSymbol(record.id), mettaString(record.recordedAt)));
+    if (record.tree !== undefined) {
+      this.db.remove(mettaCall("MemoryTree", mettaSymbol(record.id), mettaString(record.tree)));
+    }
+    for (const source of record.sources) {
+      this.db.remove(mettaCall("MemorySource", mettaSymbol(record.id), mettaSymbol(source.assertionId), mettaSymbol(source.type), mettaString(source.reference)));
+      this.db.remove(mettaCall("MemoryAssertionState", mettaSymbol(record.id), mettaSymbol(source.assertionId), mettaSymbol(source.state)));
+      this.db.remove(mettaCall("MemorySourceTruth", mettaSymbol(record.id), mettaSymbol(source.assertionId), mettaFloat(source.strength), mettaFloat(source.confidence)));
+    }
+    for (const derivation of record.derivations) {
+      this.db.remove(
+        mettaCall(
+          "MemoryDerivation",
+          mettaSymbol(record.id),
+          mettaSymbol(derivation.rule),
+          mettaTuple(derivation.premises.map((premise) => mettaSymbol(premise))),
+        ),
+      );
+    }
+    if (record.supersedes !== undefined) {
+      this.db.remove(mettaCall("MemorySupersedes", mettaSymbol(record.id), mettaSymbol(record.supersedes)));
+    }
+    if (record.supersededBy !== undefined) {
+      this.db.remove(mettaCall("MemorySupersedes", mettaSymbol(record.supersededBy), mettaSymbol(record.id)));
+    }
   }
 
   private writePropositionFacts(record: MutableRecord): void {
@@ -527,7 +810,7 @@ export class MemorySpace {
         mettaSymbol(record.kind),
       ),
       mettaCall("MemoryContent", mettaSymbol(record.id), mettaString(record.content)),
-      mettaCall("MemoryState", mettaSymbol(record.id), mettaSymbol("active"), mettaInteger(record.revision)),
+      mettaCall("MemoryState", mettaSymbol(record.id), mettaSymbol(record.state), mettaInteger(record.revision)),
       mettaCall("MemoryRecordedAt", mettaSymbol(record.id), mettaString(record.recordedAt)),
     );
     if (record.tree !== undefined) {
@@ -535,48 +818,44 @@ export class MemorySpace {
     }
   }
 
-  private appendSource(record: MutableRecord, source: MemorySourceInput): void {
-    const assertionId = `${record.id}-s${record.sources.length + 1}`;
-    record.sources.push({
-      assertionId,
-      type: source.type,
-      reference: source.reference,
-      strength: source.strength ?? 1,
-      confidence: source.confidence ?? 1,
-      state: "active",
-    });
+  private writeSourceFacts(record: MutableRecord, source: MutableSource): void {
     this.db.add(
       mettaCall(
         "MemorySource",
         mettaSymbol(record.id),
-        mettaSymbol(assertionId),
+        mettaSymbol(source.assertionId),
         mettaSymbol(source.type),
         mettaString(source.reference),
       ),
       mettaCall(
         "MemoryAssertionState",
         mettaSymbol(record.id),
-        mettaSymbol(assertionId),
-        mettaSymbol("active"),
+        mettaSymbol(source.assertionId),
+        mettaSymbol(source.state),
       ),
       mettaCall(
         "MemorySourceTruth",
         mettaSymbol(record.id),
-        mettaSymbol(assertionId),
-        mettaFloat(source.strength ?? 1),
-        mettaFloat(source.confidence ?? 1),
+        mettaSymbol(source.assertionId),
+        mettaFloat(source.strength),
+        mettaFloat(source.confidence),
       ),
     );
   }
 
   private appendDerivation(record: MutableRecord, rule: string, premises: readonly string[]): void {
-    record.derivations.push({ rule, premises: [...premises] });
+    const derivation: StoredDerivation = { rule, premises: [...premises] };
+    record.derivations.push(derivation);
+    this.writeDerivationFacts(record, derivation);
+  }
+
+  private writeDerivationFacts(record: MutableRecord, derivation: StoredDerivation): void {
     this.db.add(
       mettaCall(
         "MemoryDerivation",
         mettaSymbol(record.id),
-        mettaSymbol(rule),
-        mettaTuple(premises.map((premise) => mettaSymbol(premise))),
+        mettaSymbol(derivation.rule),
+        mettaTuple(derivation.premises.map((premise) => mettaSymbol(premise))),
       ),
     );
   }
@@ -592,6 +871,10 @@ export class MemorySpace {
     this.db.add(
       mettaCall("MemoryState", mettaSymbol(record.id), mettaSymbol(record.state), mettaInteger(record.revision)),
     );
+  }
+
+  private persist(record: MutableRecord): void {
+    this.store.save(mutableToPersisted(record));
   }
 
   // Load a record for a guarded mutation: reject an unknown id or a stale expected revision.
@@ -653,6 +936,10 @@ export class MemorySpace {
     }
     return Object.freeze([...(ids as string[])].sort());
   }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Create an empty live memory space. */
