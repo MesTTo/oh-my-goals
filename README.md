@@ -480,14 +480,74 @@ proof data to this decision gate.
 Do not put credentials, private keys, tokens, or unredacted sensitive text in
 the input. The receipt repeats the scenario and evidence provenance.
 
+## Troubleshooting
+
+- Parser not configured. `remember`, `revise`, and `query` need the HyperBase
+  parser. Without `OH_MY_GOALS_METTABASE_DIR` and `OH_MY_GOALS_HYPERBASE_PYTHON`
+  they fail with "HyperBase parser is not configured: set ...". Point both at a
+  local mettabase checkout and its Python interpreter. `solve`, `explain`, and
+  `forget` do not parse and keep working without it.
+- A statement is rejected. The parser stores only a faithful controlled-English
+  proposition whose mood suits its kind. A question, an imperative stored as
+  anything but a goal, or an unparseable sentence returns rewrite feedback and
+  stores nothing. Rewrite it as a plain declarative sentence and retry.
+- A stale revision. `revise` and `forget` with an `expectedRevision` that no
+  longer matches return `{ ok: false, code: "stale_revision", expected, actual }`
+  and change nothing. Read the current revision with `explain` and retry with it,
+  or omit `expectedRevision` to skip the check.
+- An unsupported question. A question that does not compile to the one-slot
+  subject form, such as an object question that needs do-support, returns an
+  `unsupported` code and rewrite feedback rather than a wrong answer, and still
+  lists semantic neighbours under `related`. Rephrase as "Which <role> <verb>
+  ...?" for an exact answer.
+- A semantic index without the contextual model. The default token-hash provider
+  is deterministic but blind to paraphrase, and the contextual `bge-small-en-v1.5`
+  provider needs the optional `@huggingface/transformers` peer dependency. When it
+  is absent the provider falls back to token-hash and the query receipt reports the
+  active provider, so a fallback is never presented as contextual understanding.
+  Install the peer dependency for paraphrase matching.
+- A failed purge. `forget` with `mode: "purge"` fails closed: it removes the
+  record, scrubs the content with SQLite secure-delete and a WAL checkpoint, and
+  returns `not_found` for an unknown id or `stale_revision` for a stale one. If a
+  purge reports an error, nothing was removed; resolve the id or revision and
+  retry.
+
 ## Status and verification
 
 Oh My Goals is at version 0.1.0 and is not yet published to npm.
 
-`npm run verify` checks the native MeTTa module, TypeScript API, CLI, packed
-tarball, optional named Prolog comparisons when SWI-Prolog is available, and the
-Agent Skill. Package smoke tests install the tarball into an isolated consumer
-and execute the packaged MeTTa source.
+`npm run verify` checks the native MeTTa module, the TypeScript API, the CLI, the
+packed tarball, optional named Prolog comparisons when SWI-Prolog is available,
+and the Agent Skill. The package smoke test installs the tarball into an isolated
+consumer and runs the packaged MeTTa source.
+
+The memory loop is verified end to end against the real HyperBase parser and a
+real SQLite store. `npm run test:mcp-e2e` packs the tarball, installs it into a
+fresh consumer, registers and spawns the packed `oh-my-goals mcp` server over
+stdio, and drives the whole loop through it: registration, a natural-language
+query, ranking, a derived conflict that blocks an action, retraction that
+restores it, a purge whose canary string is then absent from the database and its
+journals, and a restart that keeps the memory. It is gated on the parser
+environment and skips without it, the same way the parser-dependent unit tests
+do, so the parser-free suite still runs anywhere.
+
+A property-based test fuzzes the memory lifecycle. It replays generated sequences
+of remember, derive, retract, restore, supersede, add-proof, purge, and restart,
+and after each step checks the active set, revisions, scope boundaries, purge
+removal, and restart against a model of the MeTTa rules. It found a purged-id
+reuse across restart, now prevented by a persisted id high-water mark and pinned
+by a regression test.
+
+The installer's config is read back by each agent's own MCP CLI: `codex mcp
+list`, `opencode mcp list`, and `claude mcp get oh-my-goals` each list the
+registered server, so a project proposition stored through one agent is reachable
+by another over the same project memory.
+
+Query latency is dominated by the parser subprocess, not the reasoning. Over a
+representative project memory the HyperBase round-trip is about 52 ms at the
+median, and the query engine adds about 5 ms on top for both an exact match and a
+hybrid exact-plus-semantic query, because the token-hash index search is cheap at
+this size.
 
 Boundary tests cover 5,000 goals, 1,000 ranked actions, 1,000 motivation
 candidates, large PLN rule sets, malformed inputs, non-finite values, and stable
