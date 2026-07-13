@@ -2008,3 +2008,91 @@
       (match &self
          (DirectiveClaimOpen $task)
          (DirectiveNextRow $order $task $agent $rule))))
+
+; Memory propositions and lifecycle.
+; The host adds these ground facts to a memory space and asks these relations which
+; propositions are still visible. A proposition is visible while its own state is active
+; and it still has either an active supporting assertion or a proof whose premises are all
+; active. Retracting the last support, or a premise of the only proof, hides the
+; proposition and every conclusion whose remaining proofs depend on it. Supersession makes
+; the old proposition's state superseded, which drops it from every visibility answer.
+;
+; Constructors the host writes as ground facts:
+;   (MemoryProposition <id> <scope> <kind>)
+;   (MemoryContent <id> <sentence>)
+;   (MemoryTree <id> <sh-tree>)
+;   (MemorySource <id> <assertion-id> <source-type> <source-ref>)
+;   (MemoryAssertionState <id> <assertion-id> <state>)               active | retracted
+;   (MemorySourceTruth <id> <assertion-id> <strength> <confidence>)
+;   (MemoryState <id> <state> <revision>)               active | retracted | superseded
+;   (MemoryRecordedAt <id> <timestamp>)
+;   (MemoryDerivation <derived-id> <rule-id> (<premise-id> ...))
+;   (MemorySupersedes <new-id> <old-id>)
+
+(: gc-mem-nonempty (-> Atom Bool))
+(: gc-mem-state-active (-> Atom Bool))
+(: gc-mem-has-active-assertion (-> Atom Bool))
+(: gc-mem-active (-> Atom Bool))
+(: gc-mem-active-v (-> Atom Atom Bool))
+(: gc-mem-has-valid-proof (-> Atom Atom Bool))
+(: gc-mem-proof-valid (-> Atom Atom %Undefined%))
+(: gc-mem-all-active (-> Atom Atom Bool))
+(: gc-mem-active-proposition (-> %Undefined%))
+(: gc-mem-active-in-scope (-> Atom %Undefined%))
+(: gc-mem-active-of-kind (-> Atom Atom %Undefined%))
+
+; A collapsed match is nonempty when its result list past the comma marker is not ().
+; size-atom over a collapse counts match branches, including the ones a template pruned
+; with (empty), so it cannot count surviving results; gc-collapse-tail drops the marker.
+(= (gc-mem-nonempty $collapsed) (not (== (gc-collapse-tail $collapsed) ())))
+
+(= (gc-mem-state-active $id)
+   (gc-mem-nonempty (collapse (match &self (MemoryState $id active $revision) $revision))))
+
+(= (gc-mem-has-active-assertion $id)
+   (gc-mem-nonempty
+      (collapse (match &self (MemoryAssertionState $id $assertion active) $assertion))))
+
+; Visibility. The visited set stops a cyclic derivation from looping. and/or are strict
+; and demand Bool arguments, so the proof branch runs through a nested if only when no
+; active assertion already supports the proposition.
+(= (gc-mem-active $id) (gc-mem-active-v $id ()))
+
+(= (gc-mem-active-v $id $seen)
+   (if (is-member $id $seen)
+       False
+       (if (not (gc-mem-state-active $id))
+           False
+           (if (gc-mem-has-active-assertion $id)
+               True
+               (gc-mem-has-valid-proof $id (cons-atom $id $seen))))))
+
+(= (gc-mem-has-valid-proof $id $seen)
+   (gc-mem-nonempty (collapse (gc-mem-proof-valid $id $seen))))
+
+(= (gc-mem-proof-valid $id $seen)
+   (match &self
+      (MemoryDerivation $id $rule $premises)
+      (if (gc-mem-all-active $premises $seen) valid (empty))))
+
+; foldl-atom deconstructs its list argument directly, so pass the bound premise tuple; a
+; noeval wrapper would be deconstructed literally and recur forever.
+(= (gc-mem-all-active $premises $seen)
+   (foldl-atom $premises True $accumulator $premise
+      (and $accumulator (gc-mem-active-v $premise $seen))))
+
+; Active propositions as a nondeterministic stream that downstream rules can consume.
+(= (gc-mem-active-proposition)
+   (match &self
+      (MemoryProposition $id $scope $kind)
+      (if (gc-mem-active $id) $id (empty))))
+
+(= (gc-mem-active-in-scope $scope)
+   (match &self
+      (MemoryProposition $id $scope $kind)
+      (if (gc-mem-active $id) $id (empty))))
+
+(= (gc-mem-active-of-kind $scope $kind)
+   (match &self
+      (MemoryProposition $id $scope $kind)
+      (if (gc-mem-active $id) $id (empty))))

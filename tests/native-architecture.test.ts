@@ -45,6 +45,10 @@ const REQUIRED_NATIVE_RELATIONS = [
   "gc-directive-task-state",
   "gc-directive-claimable",
   "gc-directive-claim-receipt",
+  "gc-mem-active",
+  "gc-mem-active-proposition",
+  "gc-mem-active-in-scope",
+  "gc-mem-active-of-kind",
 ] as const;
 
 function sourceFiles(): readonly { path: string; source: ts.SourceFile }[] {

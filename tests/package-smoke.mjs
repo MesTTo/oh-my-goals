@@ -126,6 +126,7 @@ try {
     "index",
     "input",
     "json",
+    "memory",
     "models",
     "metta",
     "metta_bulk",

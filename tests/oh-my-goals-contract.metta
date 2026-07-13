@@ -114,3 +114,40 @@
 !(assertEqual (gc-directive-task-state obligated) ready)
 !(assertEqual (gc-directive-task-state conflict) blocked)
 !(assertEqual (gc-directive-task-state unregulated) backlog)
+
+; Memory lifecycle fixtures. Each proposition below is a distinct static scenario.
+(MemoryProposition mp-active project observation)
+(MemoryState mp-active active 1)
+(MemoryAssertionState mp-active mp-active-s1 active)
+
+(MemoryProposition mp-retracted project observation)
+(MemoryState mp-retracted retracted 2)
+(MemoryAssertionState mp-retracted mp-retracted-s1 active)
+
+(MemoryProposition mp-unsupported project observation)
+(MemoryState mp-unsupported active 1)
+(MemoryAssertionState mp-unsupported mp-unsupported-s1 retracted)
+
+(MemoryProposition mp-derived derived derived-conclusion)
+(MemoryState mp-derived active 1)
+(MemoryDerivation mp-derived rule-x (mp-active))
+
+(MemoryProposition mp-derived-dead derived derived-conclusion)
+(MemoryState mp-derived-dead active 1)
+(MemoryDerivation mp-derived-dead rule-y (mp-retracted))
+
+(MemoryProposition mp-cycle derived derived-conclusion)
+(MemoryState mp-cycle active 1)
+(MemoryDerivation mp-cycle rule-z (mp-cycle))
+
+(MemoryProposition mp-old user goal)
+(MemoryState mp-old superseded 2)
+(MemoryAssertionState mp-old mp-old-s1 active)
+
+!(assertEqual (gc-mem-active mp-active) True)
+!(assertEqual (gc-mem-active mp-retracted) False)
+!(assertEqual (gc-mem-active mp-unsupported) False)
+!(assertEqual (gc-mem-active mp-derived) True)
+!(assertEqual (gc-mem-active mp-derived-dead) False)
+!(assertEqual (gc-mem-active mp-cycle) False)
+!(assertEqual (gc-mem-active mp-old) False)
