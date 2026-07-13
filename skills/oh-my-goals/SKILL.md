@@ -1,34 +1,187 @@
 ---
 name: oh-my-goals
-description: Rank competing agent actions against caller-supplied goals, deontic norms, and graded evidence with Oh My Goals on MeTTa TS. Use when a coding task has multiple viable actions, required goals, individual versus collective interests, policy constraints, safety or privacy restrictions, or a consequential choice that needs a machine-readable decision receipt before execution.
+description: Local MeTTa memory and reasoning for a coding agent. Use when a task is multi-step, consequential, constrained by user rules or repository policy, ambiguous, or likely to outlive the current context window. Store the material facts, goals, and constraints as short English propositions that survive across turns and MCP restarts, query them before you plan, and rank candidate actions against them before you act. Reach for it to hold a user constraint through context compaction, to choose between actions under a policy, or to keep a decision traceable to its evidence.
 ---
 
 # Oh My Goals
 
-Use Oh My Goals as a decision gate before taking the selected action. Keep all facts and policy choices traceable to the user, repository, or tool output.
+Oh My Goals is a local memory and reasoning loop for a coding task. You talk to the
+user normally. You translate the parts that matter into short English propositions,
+store them with their real sources, and let MeTTa keep them, reason over them, and
+rank actions before you act. The user never writes MeTTa, a JSON decision packet, or
+a numeric score.
 
-The installed CLI evaluates `metta/oh-my-goals.metta` on MeTTa TS 1.1.4. The module declares the rules for norms, goal coverage, omitted evidence expectations, scores, statuses, ranking, ties, motivation consensus, and automatic-execution eligibility. Large inputs use bounded grounded numeric and structural operations. Those operations mirror goal membership and partitioning, mask and correlation mapping, stable ranking and tie selection, and PLN applicability matching from the bounded MeTTa paths. TypeScript validates the input, encodes atoms, supplies those grounded operations, handles files and processes, decodes the receipt, and dispatches only caller-owned actions. The CLI does not ask Claude Code, Codex, or OpenCode to choose the result, and it does not read their authentication state.
+You reach the loop through six MCP tools: `remember`, `query`, `solve`, `revise`,
+`forget`, and `explain`. English is parsed as data through a real Semantic
+Hypergraph parser and stored as structured propositions with provenance, epistemic
+kind, scope, and lifecycle. A recommendation from the loop is advice, never
+authorization: you still need the user's approval and an available, unblocked action
+before you act.
 
-## Evaluate a choice
+## When to use it
 
-1. Read [references/input-schema.md](references/input-schema.md).
-2. List the concrete actions that are available now. Do not include unavailable or imaginary actions.
-3. Translate stated goals into weighted individual or collective goals. Mark a goal required only when failure to satisfy it makes an action unacceptable.
-4. Add only explicit norms. Do not invent permissions, obligations, or prohibitions. Use higher integer priority for the rule that should defeat a lower-priority conflict.
-5. Record which goals each action actually satisfies.
-6. Add evidence only when its source and numeric calibration are identifiable. Strength measures support for the proposition. Confidence measures reliability and coverage of that estimate. A passing command supports only the behavior it checks. Omit the evidence entry or use confidence `0` when no defensible calibration exists.
-7. Write the JSON input to a project-local temporary file such as `ai-tmp/oh-my-goals-input.json`. Do not interpolate user text into a shell command.
-8. Prefer `node_modules/.bin/oh-my-goals decide --input ai-tmp/oh-my-goals-input.json --pretty`. Before using any local or `PATH` command, check its `--help` output for the `decide`, `install-skill`, and `prolog-check` commands. If the local binary is absent, try `oh-my-goals` from `PATH` with the same identity check. Stop and report that `oh-my-goals` must be installed when neither command identifies this CLI.
-9. Read the complete JSON receipt. Execute a selected action only when it is available, `recommended`, `automatic_execution_allowed` is true, `selection_tied` is false, and the action is already authorized by the user and the current task. A recommendation does not grant new permissions or remove an approval boundary. Treat a tie or any other status as a request for a user tie-break, more evidence, another action, or an explicit user decision.
-10. Report the selected action, its status, missing required goals, applicable norm reasons, and the evidence source. Remove the temporary input after it is no longer useful.
+Use Oh My Goals when a task is any of: multi-step, consequential, constrained by a
+user rule or repository policy, ambiguous, or likely to outlive the current context
+window. Spend the few tool calls when you must remember a constraint through context
+compaction, decide between actions under a policy, or keep a decision traceable to
+its evidence.
+
+Skip it for a trivial edit with no constraints and no branching. Do not narrate the
+loop to the user; just use it and report the outcome.
+
+## The loop
+
+1. Translate the material parts of the request into controlled-English propositions
+   and `remember` them with their real sources. A user statement or a repository
+   instruction carries authority; an agent belief is a hypothesis; a tool result is
+   an observation. Store each candidate action as `Action <id> ...`.
+2. `query` existing memory before you propose a plan, so you do not repeat earlier
+   work or violate a standing constraint.
+3. `solve` to rank the candidate actions against the stored goals, norms, and
+   evidence. A recommendation is reported only for a clear, unblocked winner, never
+   on a tie.
+4. When a tool result changes the picture, `remember` it as an observation. If it
+   settles a conflict, record the conclusion as a `derived-conclusion` with its
+   premises, then `solve` again. A derived conclusion stays active only while its
+   premises do, so retracting the evidence recomputes the decision.
+5. Use `revise` to correct a proposition and `forget` to retract a disproved
+   hypothesis. Ask the user when a missing policy choice would change the outcome.
+
+## Controlled English
+
+The parser accepts a documented subset of English, not free prose. Write
+propositions that follow this contract:
+
+- Write one asserted proposition per sentence.
+- Use explicit entity names and stable identifiers.
+- Avoid pronouns and vague references.
+- Preserve code symbols, file names, tests, and commands exactly.
+- Nested complements introduced by "that" are allowed.
+- Separate observations, goals, norms, hypotheses, and conclusions.
+- Do not state an agent hypothesis as an observed fact.
+- Do not combine several independent claims with coordination.
+- Attach source and scope through the MCP fields, not invented prose.
+
+Nested propositions preserve attribution. These three are different claims and must
+stay distinct:
+
+```text
+The user states that action deploy_preview is acceptable.
+The agent hypothesizes that action deploy_preview is acceptable.
+The test output supports the proposition that action deploy_preview is acceptable.
+```
+
+They must never collapse into the bare assertion `Action deploy_preview is
+acceptable.` A statement joined by coordination ("upgrade the package and add an
+adapter") is rejected; split it into two propositions. When `remember` rejects a
+statement, it returns the reason and asks you to rewrite it more simply without
+changing its meaning. Rewrite and retry; do not force it.
+
+## Kinds and scopes
+
+Every proposition has one epistemic `kind`. The kind controls how the proposition
+may be used, so an agent hypothesis cannot silently become a user requirement:
+`user-statement`, `repository-instruction`, `observation`, `goal`, `norm`, `action`,
+`hypothesis`, `derived-conclusion`, `decision`.
+
+Every proposition lives in one `scope`:
+
+- `session`: temporary facts and hypotheses for one active task.
+- `project`: repository-specific facts and decisions, keyed by the repository.
+- `user`: stable preferences the user has explicitly promoted.
+- `derived`: conclusions and their proof dependencies, computed from the visible
+  scopes.
+
+Project memory is isolated by repository. A question is never stored as an
+assertion; an imperative is stored only with kind `goal`.
+
+## Tools
+
+### remember
+
+Store one or more controlled-English propositions. Fields: `statements` (one
+proposition per string), `scope`, `kind`, `source` (`type`, `reference`, optional
+`strength` and `confidence` in `[0,1]`). The result reports, per statement, whether
+it was stored, its id, normalized English, mood, and revision, or the rejection
+reason and rewrite feedback.
+
+```json
+{
+  "statements": ["The user requires that the public API remains compatible."],
+  "scope": "project",
+  "kind": "goal",
+  "source": { "type": "user", "reference": "current request" }
+}
+```
+
+To record a conclusion that follows from evidence, add `premises` (the ids it
+follows from) with `kind: "derived-conclusion"` and a single statement. The
+conclusion deactivates when any premise is retracted, so the world-knowledge
+judgment lives in your explicit derivation, carried with a proof, not in the solver.
+
+### query
+
+Answer an English question over memory. Fields: `question`, optional `scope`,
+optional `includeRelated`. The result keeps three classes distinct: an exact answer
+(a structural match against an active proposition), a reasoned answer (the same
+match against a derived conclusion carrying a proof), and related matches (semantic
+neighbours, never a proof). An unsupported question form returns a precise
+limitation and rewrite feedback rather than a wrong answer.
+
+```json
+{ "question": "Which action preserves the public API?", "scope": "project" }
+```
+
+### solve
+
+Rank the candidate actions in memory against its goals, norms, and evidence. Field:
+`scope`, optional `title`, optional `motivationScores`. The result ranks each action
+with its status, norm status, satisfied and missing required goals, plus the blocked
+and tied action ids and whether automatic execution is allowed. A recommendation is
+reported only for a clear, unblocked winner. Treat a tie, a block, or a weak result
+as a request for more evidence, another action, or a user decision.
+
+### revise
+
+Supersede a proposition with a corrected statement. Fields: `id`, `statement`,
+`source`, optional `kind` and `scope` (default to the superseded proposition's),
+optional `expectedRevision`. The earlier proposition becomes historical and
+inactive; the replacement becomes active; conclusions that depended on the old one
+are recomputed. A stale `expectedRevision` is rejected so two agents cannot silently
+overwrite each other.
+
+### forget
+
+Retract or permanently purge exact propositions. Fields: `propositionIds`, `mode`
+(`retract` or `purge`), optional `expectedRevision`, `reason`, `preview`.
+Retraction makes a proposition inactive while keeping its history; purge removes it
+and scrubs its text irrecoverably. Run a broad deletion as a `preview` first: it
+lists the targets and the conclusions a removal would invalidate without changing
+anything.
+
+### explain
+
+Explain a proposition through its active premises, rules, sources, and lifecycle
+state. Field: `id`. It returns externalized reasons and proof artifacts, not model
+reasoning.
 
 ## Guardrails
 
-- Preserve the user's authority over goals and norms. Ask when a missing policy choice would change the result.
-- Do not convert preferences into obligations or prohibitions.
-- Do not claim that an action satisfies a goal without evidence from the task context.
-- Keep action IDs stable between the input and any executor.
-- Do not put credentials, tokens, private keys, or unredacted sensitive data in the input. The receipt retains the full scenario and evidence provenance. Use redacted references instead.
-- Keep temporary inputs and receipts out of version control, and remove them when they are no longer needed.
-- If automatic execution is not allowed, return the receipt and request a user tie-break, more evidence, another action, or an explicit user decision. Do not choose around the gate.
-- Re-run Oh My Goals when goals, norms, evidence, or available actions change.
+- A `solve` recommendation is advice, not authority. Never execute a tied, blocked,
+  or under-evidenced action automatically. Execution needs the user's approval and
+  an available, unblocked action.
+- Preserve the user's authority. A user statement or repository instruction carries
+  authority; your own belief is a hypothesis. Do not promote a hypothesis to a
+  requirement, and do not convert a preference into an obligation.
+- Store material tool evidence, not whole command logs. A passing command supports
+  only the behavior it checks.
+- Re-query and re-solve after goals, norms, evidence, or available actions change.
+  Retract a session hypothesis when it is disproved.
+- Removing a user statement or persistent project memory needs authority from the
+  current user request. Permanent purge always needs an explicit user instruction.
+  When authority is absent, return the preview and ask.
+- Never store credentials, tokens, private keys, or unnecessary personal data. Use a
+  redacted reference in `source` instead. Purge remains available if something
+  sensitive is stored by mistake.
+- Oh My Goals runs locally and does not read or copy the coding agent's
+  authentication state.

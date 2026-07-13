@@ -1,81 +1,136 @@
-# Structured decision input
+# MCP tool reference
 
-The CLI accepts one strict JSON object. Unknown fields and dangling references are errors.
+Oh My Goals exposes six tools over the Model Context Protocol. Each tool takes a
+small typed argument object and returns text plus structured content. A bad argument
+returns a tool error with the reason; a rejected statement returns rewrite feedback
+and stores nothing.
+
+Two enumerations recur:
+
+- `scope`: `session`, `project`, `user`, or `derived`.
+- `kind`: `user-statement`, `repository-instruction`, `observation`, `goal`, `norm`,
+  `action`, `hypothesis`, `derived-conclusion`, or `decision`.
+
+A `source` object attributes a claim: `type` (a category such as `user`,
+`repository`, `tool`, or `agent`), `reference` (what the claim is attributed to, such
+as a request or a command), and optional `strength` and `confidence` in `[0,1]`.
+
+## remember
+
+Store one or more controlled-English propositions.
 
 ```json
 {
-  "scenario": {
-    "title": "<decision title>",
-    "goals": [
-      {
-        "id": "<goal-id>",
-        "owner": "<person-or-group>",
-        "statement": "<observable desired outcome>",
-        "weight": 0.8,
-        "kind": "individual",
-        "required": true
-      }
-    ],
-    "norms": [
-      {
-        "id": "<norm-id>",
-        "mode": "forbid",
-        "targetAction": "<action-id>",
-        "reason": "<policy source and reason>",
-        "priority": 10
-      }
-    ],
-    "actions": [
-      {
-        "id": "<action-id>",
-        "label": "<short label>",
-        "description": "<what the agent would do>",
-        "satisfies": ["<goal-id>"],
-        "defaultStrength": 0.5,
-        "defaultConfidence": 0
-      }
-    ],
-    "notes": []
-  },
-  "evidence": {
-    "<action-id>": {
-      "strength": 0.75,
-      "confidence": 0.8,
-      "source": "<file, command, user statement, or tool result>",
-      "projection": null,
-      "proofs": []
-    }
-  }
+  "statements": ["The user requires that the public API remains compatible."],
+  "scope": "project",
+  "kind": "goal",
+  "source": { "type": "user", "reference": "current request" }
 }
 ```
 
-`kind` is `individual` or `collective`. `mode` is `oblige`, `permit`, or
-`forbid`. Declare at least one goal and one action. Each goal weight is finite and
-non-negative, and their aggregate must be finite and positive. Evidence strength,
-confidence, and an optional `expectation` are finite values from 0 through 1.
-Optional `deontic` is `unregulated`, `permitted`, `obligated`, `forbidden`, or
-`conflict`.
+- `statements`: array, one asserted proposition per string.
+- `scope`, `kind`, `source`: as above.
+- `premises` (optional): proposition ids this conclusion follows from. Requires
+  `kind: "derived-conclusion"` and exactly one statement. The conclusion stays active
+  only while every premise stays active.
 
-The enforced defaults are `required=false`, `priority=0`, `notes=[]`, `evidenceQuery=""`, `evidenceAtoms=[]`, `defaultStrength=0.5`, `defaultConfidence=0`, top-level `evidence={}`, evidence `projection=null`, evidence `proofs=[]`, and evidence `deontic=unregulated`. When evidence `expectation` is omitted, the static reasoner derives `0.5 + confidence * (strength - 0.5)`. Any parseable `STV` in `projection` must agree with the explicit strength and confidence. Omit non-nullable optional fields instead of supplying `null`. Nonempty `evidenceAtoms` require a nonempty `evidenceQuery`. The `decide` CLI accepts static evidence only and rejects nonempty contextual declarations. The contextual fields are available through the TypeScript API when `evaluateScenario` receives a `ContextualQueryEvidenceReasoner`.
+The result lists, per statement, either `{ stored: true, id, normalizedEnglish,
+kind, scope, mood, polarity, revision }` or `{ stored: false, reasons, feedback }`.
 
-Omitted evidence has strength `0.5` and confidence `0`. The neutral prior cannot
-produce a recommendation on its own. Set action defaults only when the caller has an
-explicit prior that applies before action-specific evidence is available.
+## query
 
-Every `satisfies` entry must name a declared goal and may appear only once per action. Every norm and evidence entry must name a declared action. IDs must be unique within each entity kind.
+Answer an English question over memory.
 
-Strength measures support for the action-evidence proposition. Confidence measures
-the reliability and coverage of that estimate. Use numeric values only when the
-source provides a defensible mapping, such as an explicit truth value, a measured
-rate with known coverage, or a named policy-engine result. A passing command proves
-only what that command checks. It does not justify high confidence for unrelated
-claims. Omit the evidence entry, or use confidence `0`, when no numeric calibration
-can be defended.
+```json
+{ "question": "Which action preserves the public API?", "scope": "project", "includeRelated": true }
+```
 
-The decision receipt contains the full scenario declaration, `selected`, `status`,
-`tied_actions`, `selection_tied`, `automatic_execution_allowed`, ranked `decisions`,
-and the effective motivation inputs and scores. Each decision
-includes its score, norm status and reasons, satisfied goals, missing required
-goals, warnings, evidence projection, and provenance metadata. Scores within
-`1e-12` are treated as tied, and automatic execution remains disabled for those
-near ties.
+- `question`: the English question.
+- `scope` (optional): restrict to one scope; the default searches all active memory.
+- `includeRelated` (optional): also list semantic neighbours beside exact answers.
+
+The result separates `answers` (each classified `exact`, `reasoned`, or `related`),
+`related` matches, `unsupported` limitation codes, the normalized query, bindings,
+proof paths, and the active semantic provider and threshold. A `related` match is
+never a proof.
+
+## solve
+
+Rank the candidate actions in memory against its goals, norms, and evidence.
+
+```json
+{ "scope": "project", "title": "Upgrade the database package" }
+```
+
+- `scope`: the scope to solve within.
+- `title` (optional): a label for the decision.
+- `motivationScores` (optional): per-action motivation, an object keyed by action id.
+
+The result reports `recommended` (only for a clear, unblocked winner, else null),
+`automaticExecutionAllowed`, `tiedActionIds`, `blockedActionIds`, the ranked
+`decisions` (each with status, score, norm status, satisfied and missing required
+goals, warnings), the `evidence` traces, and diagnostics.
+
+## revise
+
+Supersede a proposition with a corrected controlled-English statement.
+
+```json
+{
+  "id": "prop-12",
+  "statement": "The user requires that the public API stays source-compatible.",
+  "source": { "type": "user", "reference": "clarification" },
+  "expectedRevision": 3
+}
+```
+
+- `id`: the proposition to correct.
+- `statement`: the corrected proposition.
+- `source`: as above.
+- `kind`, `scope` (optional): default to the superseded proposition's.
+- `expectedRevision` (optional): a stale value is rejected so two agents cannot
+  overwrite each other.
+
+The result reports the superseded and replacement propositions and the dependent
+conclusions that were recomputed.
+
+## forget
+
+Retract or permanently purge exact propositions.
+
+```json
+{
+  "propositionIds": ["prop-42"],
+  "mode": "retract",
+  "expectedRevision": 7,
+  "reason": "The user corrected the earlier requirement.",
+  "preview": false
+}
+```
+
+- `propositionIds`: the ids to remove.
+- `mode`: `retract` (inactive, history kept) or `purge` (removed and scrubbed).
+- `expectedRevision` (optional): applied to each target; a stale revision is rejected.
+- `reason` (optional): why the removal happened.
+- `preview` (optional): when true, list the targets and the conclusions a removal
+  would invalidate without changing any state.
+
+## explain
+
+Explain a proposition through its active premises, rules, sources, and lifecycle
+state.
+
+```json
+{ "id": "prop-51" }
+```
+
+The result returns the proposition, its sources, its derivations with each premise's
+active state, and whether it is currently active. These are externalized reasons and
+proof artifacts, not model reasoning.
+
+## Controlled English
+
+Statements must follow the controlled-English contract so the parser can store them
+faithfully. See [SKILL.md](../SKILL.md) for the contract and the loop. When a
+statement is rejected, rewrite it more simply without changing its meaning and retry;
+do not force a rejected statement into memory.

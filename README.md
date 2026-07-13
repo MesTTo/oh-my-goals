@@ -1,25 +1,61 @@
 # oh-my-goals
 
-**A local decision gate for coding agents.**
+**A local MeTTa memory and reasoning MCP for coding agents.**
 
-Give Oh My Goals the actions an agent could take, the outcomes you care about,
-the rules that require or forbid actions, and the evidence for each choice. It
-ranks the actions, explains the result, and returns a JSON receipt. It never
-performs the selected action itself.
+You talk to a coding agent normally. Oh My Goals gives the agent a local memory: it
+turns the material parts of the conversation into short English propositions, parses
+them into Semantic Hypergraph structures through a real parser, and keeps them in a
+MeTTa space that survives across turns and MCP restarts. The agent queries that
+memory before it plans and ranks its candidate actions against the stored goals,
+norms, and evidence before it acts.
 
-The rules are written in [MeTTa](https://metta-lang.dev/docs/learn/) and run
-locally on [MeTTa TS](https://github.com/MesTTo/MeTTa-TS). The same package can
-be called from TypeScript or installed as an Agent Skill for Claude Code,
-Codex, and OpenCode.
+The reasoning is written in [MeTTa](https://metta-lang.dev/docs/learn/) and runs
+locally on [MeTTa TS](https://github.com/MesTTo/MeTTa-TS). Nobody writes MeTTa, a
+JSON decision packet, or a numeric score: the agent authors controlled English and
+the memory does the rest. The same package is an MCP server for Claude Code, Codex,
+and OpenCode, a matching Agent Skill, and a TypeScript library.
 
 > [!IMPORTANT]
-> Oh My Goals is a decision gate, not a sandbox or permission system. The
-> caller must invoke it before acting and must still enforce user authorization,
-> handler availability, and any operating-system security controls.
+> A recommendation from Oh My Goals is advice, not authorization. The agent must
+> still enforce user approval, handler availability, and any operating-system
+> security controls before it acts.
+
+## The memory loop
+
+A coding agent reaches the loop through six MCP tools:
+
+| Tool | What it does |
+| --- | --- |
+| `remember` | Store controlled-English propositions (facts, goals, norms, actions) with their real sources, or a proof-backed derived conclusion. |
+| `query` | Answer an English question over memory, keeping exact, reasoned, and semantically related results distinct. |
+| `solve` | Rank the stored candidate actions against the goals, norms, and evidence, reporting a recommendation only for a clear, unblocked winner. |
+| `revise` | Supersede a proposition with a correction. |
+| `forget` | Retract or permanently purge exact propositions. |
+| `explain` | Read a proposition back to its premises, sources, and lifecycle. |
+
+From a built checkout, register the server and install the Agent Skill for your
+agent in one step:
+
+```bash
+node dist/cli.js install --agent claude --scope project
+```
+
+That merges the MCP server into the agent's config and installs the skill that
+teaches the agent when to use it. The [Agent Skill](skills/oh-my-goals/SKILL.md)
+describes the loop and the controlled-English contract; the
+[MCP tool reference](skills/oh-my-goals/references/input-schema.md) lists every
+field. Memory scopes, lifecycle, persistence, semantic retrieval, and the HyperBase,
+MeTTa, and MCP boundaries are documented in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+The parser is the local mettabase AlphaBeta parser, reached through a replaceable
+adapter. Set `OH_MY_GOALS_METTABASE_DIR` and `OH_MY_GOALS_HYPERBASE_PYTHON` so the
+server can parse English; `install` and `install-mcp` carry those settings into the
+registered server when they are present in your environment.
 
 ## A decision in one minute
 
-Suppose a coding agent can apply a verified change or apply the same change
+Underneath `solve` is a decision core you can also call directly with a complete JSON
+scenario. Suppose a coding agent can apply a verified change or apply the same change
 before verification.
 
 | Candidate action | Required goal | Explicit rule | Evidence | Result |
@@ -84,7 +120,7 @@ result:
 
 ## Quickstart
 
-Node.js 20 or newer is required. The package is currently installed from a
+Node.js 22.13.0 or newer is required. The package is currently installed from a
 checkout because version 0.1.0 is not yet published to npm.
 
 ```bash
@@ -252,30 +288,37 @@ boundary is documented in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Use it with coding agents
 
-The package includes one [Agent Skills](https://agentskills.io/specification)
-definition for Claude Code, Codex, and OpenCode. From a built checkout, install
-the project-scoped skill layouts with:
+An agent reaches Oh My Goals two ways, and the CLI sets up both. The MCP server makes
+the tools reachable; the [Agent Skill](https://agentskills.io/specification) teaches
+Claude Code, Codex, and OpenCode when and how to use them.
 
 ```bash
-node dist/cli.js install-skill --agent all --scope project
+node dist/cli.js install --agent all --scope project
 ```
 
-That installs the shared `.agents/skills/oh-my-goals` layout used by Codex and
-OpenCode and the `.claude/skills/oh-my-goals` layout used by Claude Code. Use
-`--agent opencode` when you specifically want
-`.opencode/skills/oh-my-goals`. Use `--scope user` for the corresponding
-directories under your home directory. Existing differing files are preserved
-unless you pass `--force`.
+The `install` command registers the MCP server in the agent's config and installs
+the matching skill. `install-mcp` and `install-skill` do each step alone, and
+`install-mcp --remove` deregisters the server. Registration keeps three config
+formats and merges into an existing config without disturbing the user's other
+servers: Claude Code's `.mcp.json`, Codex's `.codex/config.toml`, and OpenCode's
+`opencode.json`. The registered server launches this same CLI, so the exact installed
+version runs.
 
-A request to the installed skill can be as direct as:
+`--agent all` sets up the shared `.agents` layout used by Codex and the `.claude`
+layout used by Claude Code; use `--agent opencode` for OpenCode. Use `--scope user`
+for the corresponding directories under your home directory. Existing differing skill
+files are preserved unless you pass `--force`.
 
-> Use `$oh-my-goals` to compare applying the verified change, gathering more
-> evidence, and asking me to decide. Preserve behavior is required. Applying an
-> unverified change is forbidden.
+Once installed, a request can be as direct as:
 
-The skill turns the current task into structured input, runs the local CLI, and
-reads the receipt. It does not call a hosted model, read agent credentials, or
-gain permission to execute an action.
+> Remember that preserving the public API is required and that applying an unverified
+> change is forbidden, then compare applying the verified change against gathering
+> more evidence.
+
+The agent stores the task's goals, norms, and candidate actions as controlled English
+through `remember`, ranks them with `solve`, and reads memory back with `query` and
+`explain`. Oh My Goals does not call a hosted model, read agent credentials, or gain
+permission to execute an action.
 
 <details>
 <summary>Upgrading from the former local skill name</summary>

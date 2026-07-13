@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, type ParseArgsConfig } from "node:util";
 
@@ -15,6 +15,13 @@ import {
 } from "./core.js";
 import { checkDirectivePrologParity } from "./directive.js";
 import { stableJson } from "./json.js";
+import { runStdioMemoryServer } from "./mcp.js";
+import {
+  registerMcpServer,
+  resolveLaunchEnv,
+  type McpInstallScope,
+  type McpServerLaunch,
+} from "./mcp_installer.js";
 import { verifyScorePrologParity } from "./prolog.js";
 import {
   installAgentSkill,
@@ -29,11 +36,30 @@ const SCOPES = ["project", "user"] as const;
 const ROOT_HELP = `usage: oh-my-goals <command> [options]
 
 commands:
-  decide          rank caller-supplied actions from strict JSON input
+  install         install the Agent Skill and register the MCP server
   install-skill   install the shared Agent Skill for coding agents
+  install-mcp     register the memory MCP server in an agent's config
+  mcp             serve the memory and reasoning MCP over stdio
+  decide          rank caller-supplied actions from strict JSON input
   prolog-check    compare MeTTa-TS rules with the packaged Prolog relations
 
 run "oh-my-goals <command> --help" for command options`;
+
+const MCP_HELP = `usage: oh-my-goals mcp
+
+Serves the Oh My Goals memory and reasoning MCP over stdio, for a coding agent to
+spawn as a child process. It reads and writes JSON-RPC on stdin and stdout.
+
+environment:
+  OH_MY_GOALS_MEMORY_DB          durable store path (default: ./.oh-my-goals/memory.db)
+  OH_MY_GOALS_REPOSITORY         project identity (default: current directory name)
+  OH_MY_GOALS_SESSION            session identity for session-scoped memory
+  OH_MY_GOALS_EMBEDDING          "BGE" for the contextual provider (default: token-hash)
+  OH_MY_GOALS_METTABASE_DIR      mettabase checkout for the HyperBase parser
+  OH_MY_GOALS_HYPERBASE_PYTHON   the parser's Python interpreter
+
+options:
+  -h, --help   show this help`;
 
 const DECIDE_HELP = `usage: oh-my-goals decide --input <path|-> [--pretty]
 
@@ -43,6 +69,37 @@ options:
   -h, --help             show this help`;
 
 const INSTALL_HELP = `usage: oh-my-goals install-skill [options]
+
+options:
+      --agent <name>        codex, claude, opencode, or all (default: all)
+      --scope <scope>       project or user (default: project)
+      --project-root <path> project destination root (default: current directory)
+      --force               replace a conflicting existing skill
+      --pretty              indent JSON output
+  -h, --help                show this help`;
+
+const INSTALL_MCP_HELP = `usage: oh-my-goals install-mcp [options]
+
+Registers the memory MCP server in a coding agent's local config, merging into an
+existing config without disturbing other servers. The server launches this same
+CLI (node <cli> mcp). Parser paths (OH_MY_GOALS_METTABASE_DIR,
+OH_MY_GOALS_HYPERBASE_PYTHON) and OH_MY_GOALS_EMBEDDING are carried over from the
+current environment when set; per-project memory and identity come from the
+server's working directory at runtime.
+
+options:
+      --agent <name>        codex, claude, opencode, or all (default: all)
+      --scope <scope>       project or user (default: project)
+      --project-root <path> project destination root (default: current directory)
+      --remove              deregister our entry instead of adding it
+      --pretty              indent JSON output
+  -h, --help                show this help`;
+
+const INSTALL_ALL_HELP = `usage: oh-my-goals install [options]
+
+Installs the Agent Skill and registers the memory MCP server in one step, for the
+same agent and scope. Equivalent to running install-skill then install-mcp. To
+undo, run "install-mcp --remove" and delete the installed skill directory.
 
 options:
       --agent <name>        codex, claude, opencode, or all (default: all)
@@ -83,7 +140,26 @@ type CliCommand =
       pretty: boolean;
       help: boolean;
     }
-  | { kind: "prolog-check"; pretty: boolean; help: boolean };
+  | {
+      kind: "install-mcp";
+      agent: AgentTarget;
+      scope: McpInstallScope;
+      projectRoot: string;
+      remove: boolean;
+      pretty: boolean;
+      help: boolean;
+    }
+  | {
+      kind: "install";
+      agent: AgentTarget;
+      scope: SkillInstallScope;
+      projectRoot: string;
+      force: boolean;
+      pretty: boolean;
+      help: boolean;
+    }
+  | { kind: "prolog-check"; pretty: boolean; help: boolean }
+  | { kind: "mcp"; help: boolean };
 
 function parsed(args: string[], options: ParseArgsConfig["options"]): Record<string, unknown> {
   try {
@@ -105,6 +181,32 @@ function member<T extends string>(
   return value as T;
 }
 
+// The flags shared by install, install-skill, and install-mcp. Each command adds
+// its own boolean (force or remove).
+const INSTALL_OPTIONS = {
+  agent: { type: "string", default: "all" },
+  scope: { type: "string", default: "project" },
+  "project-root": { type: "string" },
+  pretty: { type: "boolean" },
+  help: { type: "boolean", short: "h" },
+} satisfies NonNullable<ParseArgsConfig["options"]>;
+
+function installCommon(values: Record<string, unknown>): {
+  agent: AgentTarget;
+  scope: SkillInstallScope;
+  projectRoot: string;
+  pretty: boolean;
+} {
+  return {
+    agent: member(values.agent, AGENTS, "--agent"),
+    scope: member(values.scope, SCOPES, "--scope"),
+    projectRoot: resolve(
+      values["project-root"] === undefined ? process.cwd() : String(values["project-root"]),
+    ),
+    pretty: values.pretty === true,
+  };
+}
+
 function parseCli(argv: string[]): CliCommand {
   if (argv.length === 0 || (argv.length === 1 && ["-h", "--help"].includes(argv[0]!))) {
     return { kind: "help" };
@@ -122,35 +224,21 @@ function parseCli(argv: string[]): CliCommand {
     }
     return { kind: "decide", input: values.input, pretty: values.pretty === true, help: false };
   }
-  if (command === "install-skill") {
-    const values = parsed(args, {
-      agent: { type: "string", default: "all" },
-      scope: { type: "string", default: "project" },
-      "project-root": { type: "string", default: process.cwd() },
-      force: { type: "boolean" },
-      pretty: { type: "boolean" },
-      help: { type: "boolean", short: "h" },
-    });
+  if (command === "install-skill" || command === "install") {
+    const values = parsed(args, { ...INSTALL_OPTIONS, force: { type: "boolean" } });
     if (values.help === true) {
-      return {
-        kind: "install-skill",
-        agent: "all",
-        scope: "project",
-        projectRoot: process.cwd(),
-        force: false,
-        pretty: false,
-        help: true,
-      };
+      const help = { agent: "all" as const, scope: "project" as const, projectRoot: process.cwd(), force: false, pretty: false, help: true };
+      return command === "install" ? { kind: "install", ...help } : { kind: "install-skill", ...help };
     }
-    return {
-      kind: "install-skill",
-      agent: member(values.agent, AGENTS, "--agent"),
-      scope: member(values.scope, SCOPES, "--scope"),
-      projectRoot: resolve(String(values["project-root"])),
-      force: values.force === true,
-      pretty: values.pretty === true,
-      help: false,
-    };
+    const common = { ...installCommon(values), force: values.force === true, help: false };
+    return command === "install" ? { kind: "install", ...common } : { kind: "install-skill", ...common };
+  }
+  if (command === "install-mcp") {
+    const values = parsed(args, { ...INSTALL_OPTIONS, remove: { type: "boolean" } });
+    if (values.help === true) {
+      return { kind: "install-mcp", agent: "all", scope: "project", projectRoot: process.cwd(), remove: false, pretty: false, help: true };
+    }
+    return { kind: "install-mcp", ...installCommon(values), remove: values.remove === true, help: false };
   }
   if (command === "prolog-check") {
     const values = parsed(args, {
@@ -158,6 +246,10 @@ function parseCli(argv: string[]): CliCommand {
       help: { type: "boolean", short: "h" },
     });
     return { kind: "prolog-check", pretty: values.pretty === true, help: values.help === true };
+  }
+  if (command === "mcp") {
+    const values = parsed(args, { help: { type: "boolean", short: "h" } });
+    return { kind: "mcp", help: values.help === true };
   }
   throw new CliUsageError(`unknown command: ${String(command)}`);
 }
@@ -243,19 +335,46 @@ function inputError(error: unknown): string | null {
   return null;
 }
 
+// The stdio launch a registered MCP entry runs: this same CLI, under the current
+// node, serving over stdio. Parser paths and embedding choice ride along from the
+// environment; per-project memory comes from the server's working directory.
+function memoryServerLaunch(): McpServerLaunch {
+  return {
+    command: process.execPath,
+    args: [fileURLToPath(import.meta.url), "mcp"],
+    env: resolveLaunchEnv(process.env),
+  };
+}
+
 async function run(command: CliCommand, io: CliIO): Promise<number> {
   if (command.kind === "help") {
     io.stdout(ROOT_HELP);
     return 0;
   }
   if (command.help) {
-    io.stdout(
-      command.kind === "decide"
-        ? DECIDE_HELP
-        : command.kind === "install-skill"
-          ? INSTALL_HELP
-          : PROLOG_HELP,
-    );
+    const help: Record<string, string> = {
+      decide: DECIDE_HELP,
+      install: INSTALL_ALL_HELP,
+      "install-skill": INSTALL_HELP,
+      "install-mcp": INSTALL_MCP_HELP,
+      mcp: MCP_HELP,
+      "prolog-check": PROLOG_HELP,
+    };
+    io.stdout(help[command.kind] ?? ROOT_HELP);
+    return 0;
+  }
+  if (command.kind === "mcp") {
+    // Serve JSON-RPC on stdio; the transport owns stdout, so write nothing else to
+    // it. The process stays alive on the stdin listener until the client closes it.
+    const repository = process.env.OH_MY_GOALS_REPOSITORY ?? basename(process.cwd());
+    const storePath = process.env.OH_MY_GOALS_MEMORY_DB ?? join(process.cwd(), ".oh-my-goals", "memory.db");
+    mkdirSync(dirname(storePath), { recursive: true });
+    const session = process.env.OH_MY_GOALS_SESSION;
+    await runStdioMemoryServer({
+      repository,
+      storePath,
+      ...(session !== undefined && session !== "" ? { session } : {}),
+    });
     return 0;
   }
   if (command.kind === "decide") {
@@ -272,6 +391,36 @@ async function run(command: CliCommand, io: CliIO): Promise<number> {
       force: command.force,
     });
     io.stdout(stableJson(result, command.pretty));
+    return 0;
+  }
+  if (command.kind === "install-mcp") {
+    const result = await registerMcpServer({
+      agent: command.agent,
+      scope: command.scope,
+      launch: memoryServerLaunch(),
+      projectRoot: command.projectRoot,
+      homeDir: homedir(),
+      remove: command.remove,
+    });
+    io.stdout(stableJson(result, command.pretty));
+    return 0;
+  }
+  if (command.kind === "install") {
+    const skill = await installAgentSkill({
+      agent: command.agent,
+      scope: command.scope,
+      projectRoot: command.projectRoot,
+      homeDir: homedir(),
+      force: command.force,
+    });
+    const mcp = await registerMcpServer({
+      agent: command.agent,
+      scope: command.scope,
+      launch: memoryServerLaunch(),
+      projectRoot: command.projectRoot,
+      homeDir: homedir(),
+    });
+    io.stdout(stableJson({ skill, mcp }, command.pretty));
     return 0;
   }
 

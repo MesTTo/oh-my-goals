@@ -15,7 +15,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertKnownKeys, assertPlainRecord } from "./records.js";
+import { assertKnownKeys, assertOptionalNonblankStrings, assertPlainRecord } from "./records.js";
 
 export type AgentTarget = "codex" | "claude" | "opencode" | "all";
 
@@ -659,14 +659,10 @@ function validateOptions(options: SkillInstallOptions): ValidatedInstallRequest 
   if (options.force !== undefined && typeof options.force !== "boolean") {
     throw new TypeError("Skill installation force must be a boolean");
   }
-  for (const [field, value] of [
-    ["projectRoot", options.projectRoot],
-    ["homeDir", options.homeDir],
-  ] as const) {
-    if (value !== undefined && (typeof value !== "string" || value.trim() === "")) {
-      throw new TypeError(`Skill installation ${field} must be a nonblank string`);
-    }
-  }
+  assertOptionalNonblankStrings(
+    { projectRoot: options.projectRoot, homeDir: options.homeDir },
+    "Skill installation",
+  );
   const base = options.scope === "project"
     ? resolve(options.projectRoot === undefined ? process.cwd() : options.projectRoot)
     : resolve(options.homeDir === undefined ? homedir() : options.homeDir);

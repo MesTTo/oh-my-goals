@@ -187,3 +187,37 @@ export async function ingestStatement(
   const [result] = await ingestStatements(parser, memory, [input]);
   return result!;
 }
+
+/** The fields a parsed, admissible statement contributes to storage. */
+export interface PreparedProposition {
+  readonly content: string;
+  readonly tree: string;
+  readonly shTree: string;
+  readonly polarity: Polarity;
+  readonly mood: SpeechActMood;
+}
+
+/** Parse one statement and check it is an admissible assertion for its kind,
+ * returning the fields to store, or a rejection with rewrite feedback. This is the
+ * parse-only half of ingestion, reused by revise to supersede with a fresh tree. */
+export async function prepareProposition(
+  parser: HyperbaseParser,
+  content: string,
+  scope: MemoryScope,
+  kind: MemoryKind,
+): Promise<PreparedProposition | IngestRejected> {
+  const input = validateInput({ content, scope, kind, sources: [] });
+  const batch = await parser.parse([input.content]);
+  const item = batch.items[0]!;
+  const rejected = rejection(input, item);
+  if (rejected !== null) return rejected;
+  const parse = item.parses[0]!;
+  const encoded = encodeTree(parse.tree, parse.polarity);
+  return {
+    content: input.content,
+    tree: parse.typedMetta,
+    shTree: encoded.shTree,
+    polarity: encoded.polarity,
+    mood: parse.mood,
+  };
+}

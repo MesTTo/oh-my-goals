@@ -130,6 +130,8 @@ try {
     "ingest",
     "input",
     "json",
+    "mcp",
+    "mcp_installer",
     "memory",
     "models",
     "metta",
@@ -290,6 +292,8 @@ try {
     if (!run.automaticExecutionAllowed) process.exit(14);
     if (typeof m.checkDirectivePrologParity !== "function") process.exit(12);
     if (typeof m.installAgentSkill !== "function") process.exit(13);
+    if (typeof m.createMemoryMcpServer !== "function") process.exit(15);
+    if (typeof m.runStdioMemoryServer !== "function") process.exit(16);
   `;
   const api = run(process.execPath, ["--input-type=module", "--eval", apiProgram], consumer);
   assert.equal(api.stderr, "");
@@ -333,6 +337,58 @@ try {
     assert.equal(JSON.parse(installed.stdout).installed.length, 1);
     assert.match(readFileSync(join(project, ...segments, "SKILL.md"), "utf8"), /name: oh-my-goals/);
   }
+
+  // The MCP-registration installer writes a launchable server entry per agent
+  // format, is idempotent, and reverses cleanly.
+  const mcpProject = join(consumer, "project-mcp");
+  mkdirSync(mcpProject);
+  const registered = JSON.parse(
+    run(primary, ["install-mcp", "--agent", "all", "--project-root", mcpProject], consumer).stdout,
+  );
+  assert.equal(registered.registered.length, 2, "install-mcp --agent all registers codex and claude");
+  const claudeEntry = JSON.parse(readFileSync(join(mcpProject, ".mcp.json"), "utf8")).mcpServers[
+    "oh-my-goals"
+  ];
+  assert.equal(claudeEntry.type, "stdio");
+  assert.equal(typeof claudeEntry.command, "string");
+  assert.equal(claudeEntry.args.at(-1), "mcp", "registered server launches the mcp subcommand");
+  assert(claudeEntry.args.some((arg) => arg.endsWith("cli.js")), "registered server runs the packaged CLI");
+  assert.match(readFileSync(join(mcpProject, ".codex", "config.toml"), "utf8"), /\[mcp_servers\.oh-my-goals\]/);
+  const reRegistered = JSON.parse(
+    run(primary, ["install-mcp", "--agent", "all", "--project-root", mcpProject], consumer).stdout,
+  );
+  assert.equal(reRegistered.registered.length, 0, "install-mcp is idempotent");
+  assert.equal(reRegistered.unchanged.length, 2);
+  run(primary, ["install-mcp", "--agent", "opencode", "--project-root", mcpProject], consumer);
+  assert.equal(
+    JSON.parse(readFileSync(join(mcpProject, "opencode.json"), "utf8")).mcp["oh-my-goals"].type,
+    "local",
+  );
+  const removed = JSON.parse(
+    run(primary, ["install-mcp", "--agent", "opencode", "--project-root", mcpProject, "--remove"], consumer).stdout,
+  );
+  assert.equal(removed.removed.length, 1, "install-mcp --remove deregisters our entry");
+  assert.equal(
+    JSON.parse(readFileSync(join(mcpProject, "opencode.json"), "utf8")).mcp["oh-my-goals"],
+    undefined,
+  );
+
+  // The combined install writes both the Agent Skill and the MCP registration.
+  const bothProject = join(consumer, "project-install");
+  mkdirSync(bothProject);
+  const both = JSON.parse(
+    run(primary, ["install", "--agent", "claude", "--project-root", bothProject], consumer).stdout,
+  );
+  assert.equal(both.skill.installed.length, 1);
+  assert.equal(both.mcp.registered.length, 1);
+  assert.match(
+    readFileSync(join(bothProject, ".claude", "skills", "oh-my-goals", "SKILL.md"), "utf8"),
+    /name: oh-my-goals/,
+  );
+  assert(
+    JSON.parse(readFileSync(join(bothProject, ".mcp.json"), "utf8")).mcpServers["oh-my-goals"],
+    "combined install registers the MCP server",
+  );
 
   if (spawnSync("swipl", ["--version"], { encoding: "utf8" }).status === 0) {
     const parity = run(primary, ["prolog-check"], consumer);

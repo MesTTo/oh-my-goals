@@ -1,4 +1,4 @@
 interface:
   display_name: "Oh My Goals"
-  short_description: "Rank agent actions against goals and norms"
-  default_prompt: "Use $oh-my-goals to rank the available actions against my goals, norms, and evidence."
+  short_description: "Local MeTTa memory and reasoning for coding tasks"
+  default_prompt: "Use $oh-my-goals to remember this task's goals, norms, and constraints, query them, and rank the candidate actions before acting."

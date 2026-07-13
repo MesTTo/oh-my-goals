@@ -57,6 +57,7 @@
     "@metta-ts/edsl": "1.1.4",
     "@metta-ts/hyperon": "1.1.4",
     "@metta-ts/prolog": "1.1.4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "4.4.3"
   },
   "peerDependencies": {

@@ -243,10 +243,8 @@ describe("installAgentSkill", () => {
       readFileSync(join(CANONICAL_SKILL_ROOT, "references", "input-schema.md")),
     );
     const instructions = readFileSync(join(destination, "SKILL.md"), "utf8");
-    expect(instructions).toContain("confidence `0`");
-    expect(instructions).toContain(
-      "`automatic_execution_allowed` is true, `selection_tied` is false",
-    );
+    expect(instructions).toContain("Write one asserted proposition per sentence.");
+    expect(instructions).toContain("A `solve` recommendation is advice, not authority.");
     expectCanonicalTree(destination);
   });
 

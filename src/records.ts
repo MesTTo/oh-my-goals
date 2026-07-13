@@ -88,3 +88,16 @@ export function assertKnownKeys(
     throw new TypeError(`${field} contains unknown fields: ${unknown.join(", ")}`);
   }
 }
+
+/** Require each named field to be an omitted or nonblank string. `context` names
+ * the surrounding operation for the error message. */
+export function assertOptionalNonblankStrings(
+  fields: Readonly<Record<string, unknown>>,
+  context: string,
+): void {
+  for (const [field, value] of Object.entries(fields)) {
+    if (value !== undefined && (typeof value !== "string" || value.trim() === "")) {
+      throw new TypeError(`${context} ${field} must be a nonblank string`);
+    }
+  }
+}
