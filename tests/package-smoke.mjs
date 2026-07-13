@@ -139,6 +139,7 @@ try {
     "pln",
     "prolog",
     "prolog_runtime",
+    "query",
     "reasoner",
     "records",
     "rounding",
