@@ -19,6 +19,7 @@ export * from "./core.js";
 export * from "./directive.js";
 export * from "./memory.js";
 export * from "./hyperbase.js";
+export * from "./ingest.js";
 export * from "./explain.js";
 export * from "./execute.js";
 export * from "./json.js";

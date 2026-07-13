@@ -391,7 +391,7 @@ Blocked decisions use score `-1`.
 | Motivation | `consensusDecision` |
 | SNARS opinions | `assess`, `derive` |
 | Task directives | `createDirectivePlan`, `DirectiveLifecycle` |
-| Structured propositions | `makeProposition`, `buildHyperbasePacket` |
+| Memory and HyperBase ingestion | `createMemorySpace`, `createHyperbaseParser`, `ingestStatements` |
 | Optional Prolog comparison | `decideActionsWithProlog`, `verifyScorePrologParity`, `checkDirectivePrologParity` |
 | Caller safety helpers | `redactRecord`, `detectLeaks`, `executeDecision` |
 

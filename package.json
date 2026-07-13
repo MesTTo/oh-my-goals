@@ -34,6 +34,7 @@
     "metta/oh-my-goals.metta",
     "assets/gc_directive.pl",
     "assets/gc_score.pl",
+    "assets/hb_worker.py",
     "skills/oh-my-goals",
     "ARCHITECTURE.md",
     "LICENSE"
