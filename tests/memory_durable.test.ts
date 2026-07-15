@@ -383,4 +383,78 @@ describe("MemorySpace works", () => {
     expect(reloaded.sources[0]!.locator).toBe("Results: recall rose to 0.9");
     second.close();
   });
+
+  it("retracts a work and deactivates the claims and conclusions resting on it, across a reopen", () => {
+    const path = dbPath();
+    const first = openSpace(path);
+    const work = first.ingestWork({ title: "Contested finding", scope: "project", doi: "10.5/r" });
+    const cite = (locator: string) => ({ type: "paper", reference: work.doi!, workId: work.id, locator });
+    const claim = first.remember({ content: "The drug reduces risk.", scope: "project", kind: "observation", sources: [cite("Results")] });
+    const premise = first.remember({ content: "The trial was randomized.", scope: "project", kind: "observation", sources: [cite("Methods")] });
+    const conclusion = first.derive({ content: "The benefit is supported.", rule: "support", premises: [premise.id], scope: "project", kind: "derived-conclusion" });
+    expect(first.isActive(claim.id)).toBe(true);
+    expect(first.isActive(conclusion.id)).toBe(true);
+
+    const result = first.setWorkStatus(work.id, "retracted", "10.5/r-retraction", "2025-01-01");
+    expect(result.ok).toBe(true);
+    expect(first.isActive(claim.id)).toBe(false);
+    expect(first.isActive(premise.id)).toBe(false);
+    expect(first.isActive(conclusion.id)).toBe(false); // cascaded through the proof
+    expect(first.getWork(work.id)!.status).toBe("retracted");
+    first.close();
+
+    const second = openSpace(path);
+    expect(second.isActive(claim.id)).toBe(false);
+    expect(second.isActive(conclusion.id)).toBe(false);
+    expect(second.getWork(work.id)!.status).toBe("retracted");
+    second.close();
+  });
+
+  it("keeps a claim active when a second source survives a work retraction", () => {
+    const space = openSpace(dbPath());
+    const work = space.ingestWork({ title: "One of two sources", scope: "project", doi: "10.5/s" });
+    const corroborated = space.remember({
+      content: "The effect replicates.",
+      scope: "project",
+      kind: "observation",
+      sources: [
+        { type: "paper", reference: work.doi!, workId: work.id, locator: "Fig 2" },
+        { type: "user", reference: "lab notebook" },
+      ],
+    });
+    expect(space.isActive(corroborated.id)).toBe(true);
+    space.setWorkStatus(work.id, "retracted");
+    expect(space.isActive(corroborated.id)).toBe(true); // the second source still holds
+    space.close();
+  });
+
+  it("births a claim citing an already-retracted work inactive", () => {
+    const space = openSpace(dbPath());
+    const work = space.ingestWork({ title: "Already retracted", scope: "project", doi: "10.5/t" });
+    space.setWorkStatus(work.id, "retracted");
+    const late = space.remember({
+      content: "A claim from the retracted paper.",
+      scope: "project",
+      kind: "observation",
+      sources: [{ type: "paper", reference: work.doi!, workId: work.id, locator: "Intro" }],
+    });
+    expect(space.isActive(late.id)).toBe(false);
+    space.close();
+  });
+
+  it("records a non-retraction status without invalidating", () => {
+    const space = openSpace(dbPath());
+    const work = space.ingestWork({ title: "Corrected paper", scope: "project", doi: "10.5/u" });
+    const claim = space.remember({
+      content: "The corrected result holds.",
+      scope: "project",
+      kind: "observation",
+      sources: [{ type: "paper", reference: work.doi!, workId: work.id, locator: "Correction" }],
+    });
+    const result = space.setWorkStatus(work.id, "corrected", "10.5/u-correction");
+    expect(result.ok).toBe(true);
+    expect(space.getWork(work.id)!.status).toBe("corrected");
+    expect(space.isActive(claim.id)).toBe(true); // a correction flags, it does not invalidate
+    space.close();
+  });
 });

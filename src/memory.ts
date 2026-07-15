@@ -128,6 +128,10 @@ export interface StoredWork {
   readonly revision: number;
 }
 
+export type WorkStatusResult =
+  | { readonly ok: true; readonly work: StoredWork; readonly invalidated: readonly string[] }
+  | { readonly ok: false; readonly code: "not_found"; readonly id: string };
+
 export interface RememberInput {
   readonly content: string;
   readonly scope: MemoryScope;
@@ -641,6 +645,40 @@ export class MemorySpace {
     return [...this.works.values()].filter((work) => work.scope === wanted).map(freezeWork);
   }
 
+  /** Change a work's editorial status. Retracting it retracts every active source
+   * that cites it, so the existing reverse-invalidation deactivates the dependent
+   * claims and any conclusions resting on them. The other statuses are recorded
+   * but do not invalidate. Returns the claim ids whose source was retracted. */
+  setWorkStatus(id: string, status: WorkStatus, notice?: string, date?: string): WorkStatusResult {
+    const work = this.works.get(id);
+    if (work === undefined) return { ok: false, code: "not_found", id };
+    const nextStatus = assertMember(status, WORK_STATUSES, "status");
+    const updated: PersistedWork = {
+      ...work,
+      status: nextStatus,
+      statusNotice: blankToUndefined(notice),
+      statusDate: blankToUndefined(date),
+      revision: work.revision + 1,
+    };
+    this.works.set(id, updated);
+    this.store.saveWork(updated);
+
+    const invalidated: string[] = [];
+    if (nextStatus === "retracted") {
+      // Snapshot the records first: retractSource mutates source state but never
+      // adds or removes records, so a snapshot stays valid across the loop.
+      for (const record of [...this.records.values()]) {
+        for (const source of record.sources) {
+          if (source.workId === id && source.state === "active") {
+            this.retractSource(record.id, source.assertionId);
+            invalidated.push(record.id);
+          }
+        }
+      }
+    }
+    return { ok: true, work: freezeWork(updated), invalidated };
+  }
+
   private nextWorkId(): string {
     let id: string;
     do {
@@ -960,13 +998,17 @@ export class MemorySpace {
   // Attach a source to the record in memory. The MeTTa facts are written by
   // rebuildFacts on create and by writeSourceFacts on a later addSource.
   private attachSource(record: MutableRecord, source: MemorySourceInput): void {
+    // A claim citing an already-retracted work is born inactive: its source starts
+    // retracted, so a retracted paper never supports a live claim.
+    const citesRetracted =
+      source.workId !== undefined && this.works.get(source.workId)?.status === "retracted";
     record.sources.push({
       assertionId: `${record.id}-s${record.sources.length + 1}`,
       type: source.type,
       reference: source.reference,
       strength: source.strength ?? 1,
       confidence: source.confidence ?? 1,
-      state: "active",
+      state: citesRetracted ? "retracted" : "active",
       workId: source.workId,
       locator: source.locator,
     });
