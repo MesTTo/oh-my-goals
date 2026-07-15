@@ -1,2 +1,5 @@
 requests>=2.32,<3
 scipdf_parser>=0.52,<0.53
+# scipdf_parser 0.52 imports bs4 to read GROBID's TEI but does not declare it,
+# so its full-text parse path fails to import without beautifulsoup4 present.
+beautifulsoup4>=4.9,<5
