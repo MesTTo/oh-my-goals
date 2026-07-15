@@ -16,6 +16,14 @@ import { z } from "zod";
 
 import type { EmbeddingProvider } from "./embedding.js";
 import {
+  type ClaimExtractor,
+  type ClaimLocator,
+  formatLocator,
+  resolveClaimExtractor,
+  type StoreOutcome,
+  storeExtractedClaims,
+} from "./extractor.js";
+import {
   CONTROLLED_ENGLISH_CONTRACT,
   createHyperbaseParser,
   type HyperbaseParser,
@@ -33,7 +41,7 @@ import {
 import type { DurableStore } from "./durable_store.js";
 import { SqliteDurableStore } from "./durable_store.js";
 import { queryMemory } from "./query.js";
-import type { ResearchWorker } from "./research.js";
+import type { ParsedPaper, ResearchWorker } from "./research.js";
 import { createResearchWorker } from "./research_worker.js";
 import { SemanticBackend } from "./semantic.js";
 import { SemanticMemory } from "./semantic_memory.js";
@@ -61,6 +69,10 @@ export interface MemoryRuntime {
   /** The acquisition backend. Like the parser, it is always present and defers a
    * "not configured" error to the first call that needs it. */
   readonly researchWorker: ResearchWorker;
+  /** The claim extractor, or undefined when no model is configured. Extraction is
+   * optional: without it, ingestion returns the parsed paper and the caller adds
+   * claims through their own model via `add_claim`. */
+  readonly extractor: ClaimExtractor | undefined;
   readonly repository: string | undefined;
   readonly session: string | undefined;
   close(): Promise<void>;
@@ -78,6 +90,9 @@ export interface MemoryRuntimeOptions {
    * subprocess worker, which defers a "not configured" error to call time; inject
    * a stub for tests. */
   readonly researchWorker?: ResearchWorker;
+  /** Claim extractor. Defaults to the env-configured OpenAI-compatible extractor,
+   * or undefined when no model is configured; inject a stub for tests. */
+  readonly extractor?: ClaimExtractor;
   /** Embedding provider. Defaults to the token-hash provider, or BGE via env. */
   readonly embedding?: EmbeddingProvider;
   readonly now?: () => string;
@@ -100,16 +115,19 @@ export async function createMemoryRuntime(options: MemoryRuntimeOptions = {}): P
   });
   const parser = options.parser ?? createHyperbaseParser();
   const researchWorker = options.researchWorker ?? createResearchWorker();
+  const extractor = options.extractor ?? resolveClaimExtractor();
   return {
     memory,
     parser,
     researchWorker,
+    extractor,
     repository: options.repository,
     session: options.session,
     async close() {
       memory.close();
       await parser.close();
       await researchWorker?.close();
+      await extractor?.close?.();
     },
   };
 }
@@ -191,6 +209,56 @@ function serializeWork(work: StoredWork): Record<string, unknown> {
     statusNotice: work.statusNotice ?? null,
     statusDate: work.statusDate ?? null,
     revision: work.revision,
+  };
+}
+
+/** Auto-extract validated claims from a freshly ingested work, when requested and
+ * a model is configured. Returns null when extraction was not asked for, a note
+ * when asked for without a model, else the extraction outcome. Each claim is
+ * stored through the same ingest path add_claim uses, sourced from the work, so
+ * the parser validates it and a retracted work keeps its claims inactive. */
+async function maybeExtractClaims(
+  runtime: MemoryRuntime,
+  work: StoredWork,
+  paper: ParsedPaper,
+  scope: MemoryScope,
+  requested: boolean | undefined,
+): Promise<Record<string, unknown> | null> {
+  if (requested !== true) return null;
+  const extractor = runtime.extractor;
+  if (extractor === undefined) {
+    return { requested: true, model: null, note: "no model configured; add claims with add_claim" };
+  }
+  const reference = work.doi ?? work.arxivId ?? work.id;
+  const storeClaim = async (text: string, locator: ClaimLocator): Promise<StoreOutcome> => {
+    const [result] = await ingestStatements(runtime.parser, runtime.memory, [
+      {
+        content: text,
+        scope,
+        kind: "observation",
+        sources: [{ type: "paper", reference, workId: work.id, locator: formatLocator(locator) }],
+      },
+    ]);
+    return result!.stored
+      ? { stored: true, id: result!.proposition.id }
+      : { stored: false, feedback: result!.feedback, reasons: result!.reasons };
+  };
+  const outcome = await storeExtractedClaims(extractor, paper, storeClaim);
+  return {
+    requested: true,
+    model: outcome.model,
+    proposed: outcome.proposed,
+    stored: outcome.stored.map((claim) => ({
+      id: claim.id,
+      text: claim.text,
+      confidence: claim.confidence,
+      attempts: claim.attempts,
+    })),
+    dropped: outcome.dropped.map((claim) => ({
+      text: claim.text,
+      reasons: claim.reasons,
+      attempts: claim.attempts,
+    })),
   };
 }
 
@@ -511,13 +579,17 @@ export function createMemoryMcpServer(runtime: MemoryRuntime): McpServer {
     {
       title: "Ingest paper",
       description:
-        "Fetch a paper by DOI or arXiv id, parse it, and store it as a work with its retraction status. Returns the work and its parsed sections and references so you can add claims from them. A retracted paper is stored retracted, so any claim added from it is inactive.",
+        "Fetch a paper by DOI or arXiv id, parse it, and store it as a work with its retraction status. Returns the work and its parsed sections and references so you can add claims from them. A retracted paper is stored retracted, so any claim added from it is inactive. Set extractClaims to have the configured model read the paper into controlled-English claims automatically; each is validated by the parser before it is stored.",
       inputSchema: {
         id: z.string().min(1).describe("a DOI or an arXiv id"),
         scope: scopeEnum,
+        extractClaims: z
+          .boolean()
+          .optional()
+          .describe("when true and a model is configured, auto-extract validated claims from the paper"),
       },
     },
-    async ({ id, scope }) => {
+    async ({ id, scope, extractClaims }) => {
       try {
         const parsed = await runtime.researchWorker.fetchAndParse(id);
         const meta = parsed.metadata;
@@ -548,10 +620,12 @@ export function createMemoryMcpServer(runtime: MemoryRuntime): McpServer {
           statusNotice: notice,
           statusDate: date,
         });
+        const extraction = await maybeExtractClaims(runtime, work, parsed, scope as MemoryScope, extractClaims);
         return ok(`Ingested ${work.id}${status === "active" ? "" : ` (${status})`}.`, {
           work: serializeWork(work),
           sections: parsed.sections,
           references: parsed.references,
+          extraction,
         });
       } catch (error) {
         return fail(errorText(error));

@@ -16,6 +16,7 @@ import type {
   SpeechActMood,
 } from "../src/hyperbase.js";
 import { typedMettaOf } from "../src/candidates.js";
+import type { ClaimExtractor, ExtractionResult } from "../src/extractor.js";
 import { createMemoryMcpServer, createMemoryRuntime, type MemoryRuntime } from "../src/mcp.js";
 import type { ParsedPaper, ResearchWorker, RetractionRecord } from "../src/research.js";
 
@@ -67,6 +68,10 @@ const REVIEW_A = "The reviewer approved a_upgrade.";
 const REVIEW_B = "The reviewer approved a_adapter.";
 const BAD = "Do this and that and everything at once.";
 const CLAIM = "The transformer improves translation.";
+const CLAIM2 = "The transformer reduces the cost.";
+// A claim the extractor proposes that the stub parser rejects until it is rewritten.
+const NEEDS_REWRITE = "needs a rewrite before it will parse";
+const NEVER_PARSES = "never parses no matter what";
 
 class StubParser implements HyperbaseParser {
   readonly #items = new Map<string, HyperbaseParseItem>();
@@ -84,6 +89,7 @@ class StubParser implements HyperbaseParser {
     put(accepted(REVIEW_A, relation("approved", np1("the", "reviewer"), plus("action", "a_upgrade")), "declarative"));
     put(accepted(REVIEW_B, relation("approved", np1("the", "reviewer"), plus("action", "a_adapter")), "declarative"));
     put(accepted(CLAIM, relation("improves", plus("model", "transformer"), np1("the", "translation")), "declarative"));
+    put(accepted(CLAIM2, relation("reduces", plus("model", "transformer"), np1("the", "cost")), "declarative"));
     put(rejected(BAD));
   }
   async parse(statements: readonly string[]): Promise<HyperbaseParseBatch> {
@@ -125,19 +131,46 @@ class StubResearchWorker implements ResearchWorker {
   async close(): Promise<void> {}
 }
 
+// A scripted extractor: it proposes one claim the parser accepts, one that only
+// parses after a rewrite, and one that never parses. So a test drives the whole
+// propose -> validate -> rewrite -> drop loop without a live model.
+class StubClaimExtractor implements ClaimExtractor {
+  readonly model = "stub-llm";
+  extractCalls = 0;
+  rewriteCalls = 0;
+  async extract(): Promise<ExtractionResult> {
+    this.extractCalls += 1;
+    return {
+      model: this.model,
+      claims: [
+        { text: CLAIM, locator: { section: "Results", quote: "BLEU rose" }, confidence: 0.9 },
+        { text: NEEDS_REWRITE, locator: { section: "Abstract", quote: "the cost falls" }, confidence: 0.6 },
+        { text: NEVER_PARSES, locator: { section: "Intro", quote: "unparseable" }, confidence: 0.3 },
+      ],
+    };
+  }
+  async rewrite(claim: string): Promise<string> {
+    this.rewriteCalls += 1;
+    return claim === NEEDS_REWRITE ? CLAIM2 : NEVER_PARSES;
+  }
+}
+
 interface Harness {
   readonly client: Client;
   readonly runtime: MemoryRuntime;
   readonly worker: StubResearchWorker;
+  readonly extractor: StubClaimExtractor;
   close(): Promise<void>;
 }
 
 async function connect(): Promise<Harness> {
   const worker = new StubResearchWorker();
+  const extractor = new StubClaimExtractor();
   const runtime = await createMemoryRuntime({
     store: new InMemoryDurableStore(),
     parser: new StubParser(),
     researchWorker: worker,
+    extractor,
     embedding: new TokenEmbeddingProvider(256),
     repository: "demo",
   });
@@ -150,6 +183,7 @@ async function connect(): Promise<Harness> {
     client,
     runtime,
     worker,
+    extractor,
     async close() {
       await client.close();
       await server.close();
@@ -353,6 +387,70 @@ describe("MCP paper ingestion and retraction", () => {
       scope: "project",
     });
     expect(isError).toBe(true);
+  });
+
+  it("auto-extracts validated claims on ingest, storing only what the parser accepts", async () => {
+    const { data, isError } = await call(harness.client, "ingest_paper", {
+      id: "1706.03762",
+      scope: "project",
+      extractClaims: true,
+    });
+    expect(isError).toBe(false);
+    expect(harness.extractor.extractCalls).toBe(1);
+    // Three proposed: one accepted as-is, one accepted after a rewrite, one dropped.
+    expect(data.extraction.model).toBe("stub-llm");
+    expect(data.extraction.proposed).toBe(3);
+    expect(data.extraction.stored).toHaveLength(2);
+    expect(data.extraction.dropped).toHaveLength(1);
+    const attempts = data.extraction.stored.map((c: any) => c.attempts).sort();
+    expect(attempts).toEqual([1, 2]);
+    expect(harness.extractor.rewriteCalls).toBeGreaterThanOrEqual(2);
+
+    // A stored claim is active and sourced from the work with a paper locator.
+    const storedId = data.extraction.stored[0].id as string;
+    const explained = await call(harness.client, "explain", { id: storedId });
+    expect(explained.data.active).toBe(true);
+    expect(explained.data.sources[0].type).toBe("paper");
+  });
+
+  it("does not extract when extractClaims is not set", async () => {
+    const { data } = await call(harness.client, "ingest_paper", { id: "1706.03762", scope: "project" });
+    expect(data.extraction).toBeNull();
+    expect(harness.extractor.extractCalls).toBe(0);
+  });
+
+  it("notes when extraction is requested but no model is configured", async () => {
+    const runtime = await createMemoryRuntime({
+      store: new InMemoryDurableStore(),
+      parser: new StubParser(),
+      researchWorker: new StubResearchWorker(),
+      embedding: new TokenEmbeddingProvider(256),
+    });
+    const server = createMemoryMcpServer(runtime);
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "no-model", version: "0.0.0" });
+    await server.connect(st);
+    await client.connect(ct);
+    const { data, isError } = await call(client, "ingest_paper", { id: "1706.03762", scope: "project", extractClaims: true });
+    expect(isError).toBe(false);
+    expect(data.extraction.model).toBeNull();
+    expect(data.extraction.note).toContain("add_claim");
+    expect(data.sections.length).toBeGreaterThan(0);
+    await client.close();
+    await server.close();
+    await runtime.close();
+  });
+
+  it("invalidates auto-extracted claims when the work is retracted", async () => {
+    const ingest = await call(harness.client, "ingest_paper", { id: "10.1/bad", scope: "project", extractClaims: true });
+    const workId = ingest.data.work.id;
+    const storedIds = ingest.data.extraction.stored.map((c: any) => c.id as string);
+    expect(storedIds.length).toBeGreaterThan(0);
+
+    harness.worker.retracted.add("10.1/bad");
+    const check = await call(harness.client, "check_retractions", { scope: "project" });
+    expect(check.data.changed[0].workId).toBe(workId);
+    for (const id of storedIds) expect(check.data.changed[0].invalidated).toContain(id);
   });
 
   it("invalidates a work's claims when check_retractions finds it newly retracted", async () => {

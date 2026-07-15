@@ -126,6 +126,7 @@ try {
     "embedding",
     "execute",
     "explain",
+    "extractor",
     "hyperbase",
     "index",
     "ingest",
