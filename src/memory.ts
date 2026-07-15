@@ -16,6 +16,8 @@ import {
   InMemoryDurableStore,
   type DurableStore,
   type PersistedRecord,
+  type PersistedSource,
+  type PersistedWork,
 } from "./durable_store.js";
 import {
   createGoalChainerMetta,
@@ -53,25 +55,77 @@ export type MemoryKind = (typeof MEMORY_KINDS)[number];
 export const MEMORY_STATES = Object.freeze(["active", "retracted", "superseded"] as const);
 export type MemoryPropositionState = (typeof MEMORY_STATES)[number];
 
+// A work's editorial status. `active` is a paper in good standing; `retracted`
+// invalidates every claim sourced from it; the others are flagged but not
+// invalidating by default. The names mirror Crossref's update types.
+export const WORK_STATUSES = Object.freeze([
+  "active",
+  "retracted",
+  "corrected",
+  "concern",
+  "withdrawn",
+] as const);
+export type WorkStatus = (typeof WORK_STATUSES)[number];
+
 export interface MemorySourceInput {
   readonly type: string;
   readonly reference: string;
   readonly strength?: number;
   readonly confidence?: number;
+  /** The work this source cites, when the source is a paper. */
+  readonly workId?: string;
+  /** Where in the work the claim came from: a section and a verbatim quote. */
+  readonly locator?: string;
 }
 
-export interface StoredSource {
-  readonly assertionId: string;
-  readonly type: string;
-  readonly reference: string;
-  readonly strength: number;
-  readonly confidence: number;
-  readonly state: "active" | "retracted";
-}
+// The public stored-source shape is exactly the persisted one; alias it rather
+// than repeat the field list.
+export type StoredSource = PersistedSource;
 
 export interface StoredDerivation {
   readonly rule: string;
   readonly premises: readonly string[];
+}
+
+/** A paper to ingest. Only a title and a scope are required; the external ids and
+ * bibliographic fields are filled from whatever the research worker resolved. */
+export interface MemoryWorkInput {
+  readonly title: string;
+  readonly scope: MemoryScope;
+  readonly doi?: string;
+  readonly arxivId?: string;
+  readonly openAlexId?: string;
+  readonly semanticScholarId?: string;
+  readonly authors?: readonly string[];
+  readonly year?: number;
+  readonly venue?: string;
+  readonly abstract?: string;
+  readonly pdfUrl?: string;
+  readonly status?: WorkStatus;
+  readonly statusNotice?: string;
+  readonly statusDate?: string;
+  readonly recordedAt?: string;
+  readonly id?: string;
+}
+
+export interface StoredWork {
+  readonly id: string;
+  readonly scope: MemoryScope;
+  readonly title: string;
+  readonly doi: string | undefined;
+  readonly arxivId: string | undefined;
+  readonly openAlexId: string | undefined;
+  readonly semanticScholarId: string | undefined;
+  readonly authors: readonly string[];
+  readonly year: number | undefined;
+  readonly venue: string | undefined;
+  readonly abstract: string | undefined;
+  readonly pdfUrl: string | undefined;
+  readonly status: WorkStatus;
+  readonly statusNotice: string | undefined;
+  readonly statusDate: string | undefined;
+  readonly recordedAt: string;
+  readonly revision: number;
 }
 
 export interface RememberInput {
@@ -183,6 +237,8 @@ interface MutableSource {
   strength: number;
   confidence: number;
   state: "active" | "retracted";
+  workId: string | undefined;
+  locator: string | undefined;
 }
 
 interface MutableRecord {
@@ -248,12 +304,14 @@ function validateSources(value: unknown): MemorySourceInput[] {
   return value.map((raw, index) => {
     const path = `sources[${index}]`;
     assertPlainRecord(raw, path);
-    assertKnownKeys(raw, path, ["type", "reference", "strength", "confidence"]);
+    assertKnownKeys(raw, path, ["type", "reference", "strength", "confidence", "workId", "locator"]);
     return {
       type: nonblankString(raw.type, `${path}.type`),
       reference: nonblankString(raw.reference, `${path}.reference`),
       strength: unitInterval(raw.strength, `${path}.strength`, 1),
       confidence: unitInterval(raw.confidence, `${path}.confidence`, 1),
+      workId: raw.workId === undefined ? undefined : nonblankString(raw.workId, `${path}.workId`),
+      locator: raw.locator === undefined ? undefined : nonblankString(raw.locator, `${path}.locator`),
     };
   });
 }
@@ -301,6 +359,8 @@ function copySource(source: MutableSource): MutableSource {
     strength: source.strength,
     confidence: source.confidence,
     state: source.state,
+    workId: source.workId,
+    locator: source.locator,
   };
 }
 
@@ -320,6 +380,34 @@ function freezeProposition(record: MutableRecord): StoredProposition {
         }),
       ),
     ),
+  });
+}
+
+// An empty or whitespace-only optional string becomes undefined, so a resolver
+// that returns "" for a missing field does not store a blank value.
+function blankToUndefined(value: string | undefined): string | undefined {
+  return value === undefined || value.trim() === "" ? undefined : value;
+}
+
+function freezeWork(work: PersistedWork): StoredWork {
+  return Object.freeze({
+    id: work.id,
+    scope: assertMember(work.scope, MEMORY_SCOPES, "stored work scope"),
+    title: work.title,
+    doi: work.doi,
+    arxivId: work.arxivId,
+    openAlexId: work.openAlexId,
+    semanticScholarId: work.semanticScholarId,
+    authors: Object.freeze(work.authors === undefined ? [] : (JSON.parse(work.authors) as string[])),
+    year: work.year,
+    venue: work.venue,
+    abstract: work.abstract,
+    pdfUrl: work.pdfUrl,
+    status: assertMember(work.status, WORK_STATUSES, "stored work status"),
+    statusNotice: work.statusNotice,
+    statusDate: work.statusDate,
+    recordedAt: work.recordedAt,
+    revision: work.revision,
   });
 }
 
@@ -358,6 +446,8 @@ function mutableToPersisted(record: MutableRecord): PersistedRecord {
 export class MemorySpace {
   private readonly db: GoalChainerMetta = createGoalChainerMetta();
   private readonly records = new Map<string, MutableRecord>();
+  // Ingested works, keyed by internal id, in persisted shape and already in scope.
+  private readonly works = new Map<string, PersistedWork>();
   private readonly store: DurableStore;
   private readonly now: () => string;
   private readonly idPrefix: string;
@@ -365,6 +455,9 @@ export class MemorySpace {
   private readonly repository: string;
   private readonly session: string;
   private counter = 0;
+  // A separate id sequence for works, kept past purge like the proposition counter.
+  private static readonly WORK_PREFIX = "work";
+  private workCounter = 0;
 
   constructor(options: MemorySpaceOptions = {}) {
     this.now = options.now ?? (() => new Date().toISOString());
@@ -488,6 +581,92 @@ export class MemorySpace {
   get(id: string): StoredProposition | undefined {
     const record = this.records.get(id);
     return record === undefined ? undefined : freezeProposition(record);
+  }
+
+  // --- works: the papers claims cite ---
+
+  /** Store a paper as a work, or return the existing one when an external id
+   * already matches in the same scope. Works are the sources claims cite. */
+  ingestWork(input: MemoryWorkInput): StoredWork {
+    assertPlainRecord(input, "work input");
+    const scope = assertMember(input.scope, MEMORY_SCOPES, "scope");
+    const title = nonblankString(input.title, "title");
+    const existing = this.findWorkByExternalId(input, scope);
+    if (existing !== undefined) return freezeWork(existing);
+    const id = input.id ?? this.nextWorkId();
+    if (input.id !== undefined && this.works.has(id)) {
+      throw new RangeError(`work id already exists: ${id}`);
+    }
+    const status =
+      input.status === undefined ? "active" : assertMember(input.status, WORK_STATUSES, "status");
+    const work: PersistedWork = {
+      id,
+      scope,
+      repository: this.repository,
+      session: this.session,
+      title,
+      doi: blankToUndefined(input.doi),
+      arxivId: blankToUndefined(input.arxivId),
+      openAlexId: blankToUndefined(input.openAlexId),
+      semanticScholarId: blankToUndefined(input.semanticScholarId),
+      authors: input.authors === undefined ? undefined : JSON.stringify([...input.authors]),
+      year: input.year,
+      venue: blankToUndefined(input.venue),
+      abstract: blankToUndefined(input.abstract),
+      pdfUrl: blankToUndefined(input.pdfUrl),
+      status,
+      statusNotice: blankToUndefined(input.statusNotice),
+      statusDate: blankToUndefined(input.statusDate),
+      recordedAt: input.recordedAt ?? this.now(),
+      revision: 1,
+    };
+    this.works.set(id, work);
+    this.store.saveWork(work);
+    this.store.bumpIdCounter(
+      MemorySpace.WORK_PREFIX,
+      Math.max(this.workCounter, this.maxOrdinal([id], MemorySpace.WORK_PREFIX)),
+    );
+    return freezeWork(work);
+  }
+
+  /** Read a stored work by id. */
+  getWork(id: string): StoredWork | undefined {
+    const work = this.works.get(id);
+    return work === undefined ? undefined : freezeWork(work);
+  }
+
+  /** Every work stored in one scope. */
+  worksInScope(scope: MemoryScope): readonly StoredWork[] {
+    const wanted = assertMember(scope, MEMORY_SCOPES, "scope");
+    return [...this.works.values()].filter((work) => work.scope === wanted).map(freezeWork);
+  }
+
+  private nextWorkId(): string {
+    let id: string;
+    do {
+      this.workCounter += 1;
+      id = `${MemorySpace.WORK_PREFIX}-${this.workCounter}`;
+    } while (this.works.has(id));
+    return id;
+  }
+
+  // Return an existing work in scope that shares any external id with the input,
+  // so ingesting the same paper twice does not create a duplicate.
+  private findWorkByExternalId(input: MemoryWorkInput, scope: MemoryScope): PersistedWork | undefined {
+    const matches = (a: string | undefined, b: string | undefined): boolean =>
+      a !== undefined && a !== "" && a === b;
+    for (const work of this.works.values()) {
+      if (work.scope !== scope) continue;
+      if (
+        matches(input.doi, work.doi) ||
+        matches(input.arxivId, work.arxivId) ||
+        matches(input.openAlexId, work.openAlexId) ||
+        matches(input.semanticScholarId, work.semanticScholarId)
+      ) {
+        return work;
+      }
+    }
+    return undefined;
   }
 
   /** Release the durable store. The live MeTTa space is discarded with the instance. */
@@ -634,6 +813,15 @@ export class MemorySpace {
       this.records.set(record.id, record);
       this.rebuildFacts(record);
     }
+    const works = this.store.allWorks();
+    this.workCounter = Math.max(
+      this.maxOrdinal(works.map((work) => work.id), MemorySpace.WORK_PREFIX),
+      this.store.idCounter(MemorySpace.WORK_PREFIX),
+    );
+    for (const work of works) {
+      if (!this.inScope(work.scope, work.repository, work.session)) continue;
+      this.works.set(work.id, { ...work });
+    }
   }
 
   private inScope(scope: string, repository: string, session: string): boolean {
@@ -651,9 +839,19 @@ export class MemorySpace {
   }
 
   private maxGeneratedCounter(records: readonly PersistedRecord[]): number {
+    return this.maxOrdinal(
+      records.map((record) => record.id),
+      this.idPrefix,
+    );
+  }
+
+  // The highest `<prefix>-<n>` ordinal among the ids, or 0 when none match.
+  private maxOrdinal(ids: readonly string[], prefix: string): number {
+    const pattern = new RegExp(`^${escapeRegExp(prefix)}-(\\d+)$`);
     let max = 0;
-    for (const record of records) {
-      max = Math.max(max, this.idOrdinal(record.id));
+    for (const id of ids) {
+      const match = pattern.exec(id);
+      if (match !== null) max = Math.max(max, Number(match[1]));
     }
     return max;
   }
@@ -769,6 +967,8 @@ export class MemorySpace {
       strength: source.strength ?? 1,
       confidence: source.confidence ?? 1,
       state: "active",
+      workId: source.workId,
+      locator: source.locator,
     });
   }
 

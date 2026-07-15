@@ -303,3 +303,84 @@ describe("MemorySpace purge", () => {
     }
   });
 });
+
+describe("MemorySpace works", () => {
+  it("stores a work and reloads every field after a reopen", () => {
+    const path = dbPath();
+    const first = openSpace(path);
+    const stored = first.ingestWork({
+      title: "Amyloid beta and Alzheimer's",
+      scope: "project",
+      doi: "10.1000/abeta",
+      arxivId: "2401.00001",
+      authors: ["A. One", "B. Two"],
+      year: 2024,
+      venue: "Nature",
+      abstract: "We study amyloid beta.",
+    });
+    expect(stored.id).toBe("work-1");
+    expect(stored.status).toBe("active");
+    expect(stored.authors).toEqual(["A. One", "B. Two"]);
+    first.close();
+
+    const second = openSpace(path);
+    const reloaded = second.getWork("work-1")!;
+    expect(reloaded.title).toBe("Amyloid beta and Alzheimer's");
+    expect(reloaded.doi).toBe("10.1000/abeta");
+    expect(reloaded.arxivId).toBe("2401.00001");
+    expect(reloaded.authors).toEqual(["A. One", "B. Two"]);
+    expect(reloaded.year).toBe(2024);
+    expect(reloaded.venue).toBe("Nature");
+    expect(reloaded.abstract).toBe("We study amyloid beta.");
+    expect(reloaded.status).toBe("active");
+    second.close();
+  });
+
+  it("deduplicates a work by external id and continues work ids past a reopen", () => {
+    const path = dbPath();
+    const first = openSpace(path);
+    const one = first.ingestWork({ title: "First", scope: "project", doi: "10.1/a" });
+    const dup = first.ingestWork({ title: "First submitted again", scope: "project", doi: "10.1/a" });
+    expect(dup.id).toBe(one.id);
+    expect(first.worksInScope("project")).toHaveLength(1);
+    first.close();
+
+    const second = openSpace(path);
+    const two = second.ingestWork({ title: "Second", scope: "project", doi: "10.1/b" });
+    expect(two.id).toBe("work-2");
+    second.close();
+  });
+
+  it("isolates works by repository and shares user-scope works", () => {
+    const path = dbPath();
+    const repoA = new MemorySpace({ store: new SqliteDurableStore(path), repository: "repo-a", session: "s1" });
+    repoA.ingestWork({ title: "Project paper", scope: "project" });
+    repoA.ingestWork({ title: "User paper", scope: "user" });
+    repoA.close();
+
+    const repoB = new MemorySpace({ store: new SqliteDurableStore(path), repository: "repo-b", session: "s1" });
+    expect(repoB.worksInScope("project")).toHaveLength(0);
+    expect(repoB.worksInScope("user")).toHaveLength(1);
+    repoB.close();
+  });
+
+  it("carries a paper source's work link and locator through a reopen", () => {
+    const path = dbPath();
+    const first = openSpace(path);
+    const work = first.ingestWork({ title: "Cited paper", scope: "project", doi: "10.9/z" });
+    const claim = first.remember({
+      content: "The method improves recall.",
+      scope: "project",
+      kind: "observation",
+      sources: [{ type: "paper", reference: work.doi!, workId: work.id, locator: "Results: recall rose to 0.9" }],
+    });
+    first.close();
+
+    const second = openSpace(path);
+    const reloaded = second.get(claim.id)!;
+    expect(reloaded.sources[0]!.type).toBe("paper");
+    expect(reloaded.sources[0]!.workId).toBe(work.id);
+    expect(reloaded.sources[0]!.locator).toBe("Results: recall rose to 0.9");
+    second.close();
+  });
+});

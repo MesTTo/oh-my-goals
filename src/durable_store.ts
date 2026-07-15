@@ -26,6 +26,10 @@ export interface PersistedSource {
   readonly strength: number;
   readonly confidence: number;
   readonly state: "active" | "retracted";
+  /** The work this source cites, when the source is a paper. */
+  readonly workId: string | undefined;
+  /** Where in the work the claim came from: a section and a verbatim quote. */
+  readonly locator: string | undefined;
 }
 
 export interface PersistedDerivation {
@@ -57,6 +61,33 @@ export interface PersistedRecord {
   readonly derivations: readonly PersistedDerivation[];
 }
 
+/** A bibliographic record: one paper the assistant has ingested. Claims cite a
+ * work through their source's workId. Its status carries retraction state. */
+export interface PersistedWork {
+  readonly id: string;
+  readonly scope: string;
+  readonly repository: string;
+  readonly session: string;
+  readonly title: string;
+  readonly doi: string | undefined;
+  readonly arxivId: string | undefined;
+  readonly openAlexId: string | undefined;
+  readonly semanticScholarId: string | undefined;
+  /** JSON array of author names. */
+  readonly authors: string | undefined;
+  readonly year: number | undefined;
+  readonly venue: string | undefined;
+  readonly abstract: string | undefined;
+  readonly pdfUrl: string | undefined;
+  /** One of active, retracted, corrected, concern, withdrawn. */
+  readonly status: string;
+  /** The retraction or correction notice reference, when one exists. */
+  readonly statusNotice: string | undefined;
+  readonly statusDate: string | undefined;
+  readonly recordedAt: string;
+  readonly revision: number;
+}
+
 /** Thrown by `insert` when a record id already exists. Generated ids retry with a
  * bumped counter; a caller-supplied id surfaces this as a hard error. */
 export class IdConflictError extends Error {
@@ -71,10 +102,14 @@ export class IdConflictError extends Error {
 export interface DurableStore {
   /** Every stored record, for rebuilding the live space on startup. */
   allRecords(): PersistedRecord[];
+  /** Every stored work, for rebuilding the ingested-paper set on startup. */
+  allWorks(): PersistedWork[];
   /** Insert a new record, throwing {@link IdConflictError} if the id exists. */
   insert(record: PersistedRecord): void;
   /** Insert or replace one record and its sources and derivations. */
   save(record: PersistedRecord): void;
+  /** Insert or replace one work. */
+  saveWork(work: PersistedWork): void;
   /** Permanently remove a record so its content cannot be recovered. */
   purge(id: string): void;
   /** The highest id ordinal ever recorded for `prefix`. Preserved across purge so a
@@ -101,10 +136,19 @@ function cloneRecord(record: PersistedRecord): PersistedRecord {
 /** Non-persistent store for tests and ephemeral memory. */
 export class InMemoryDurableStore implements DurableStore {
   #records = new Map<string, PersistedRecord>();
+  #works = new Map<string, PersistedWork>();
   #counters = new Map<string, number>();
 
   allRecords(): PersistedRecord[] {
     return [...this.#records.values()].map(cloneRecord);
+  }
+
+  allWorks(): PersistedWork[] {
+    return [...this.#works.values()].map((work) => ({ ...work }));
+  }
+
+  saveWork(work: PersistedWork): void {
+    this.#works.set(work.id, { ...work });
   }
 
   idCounter(prefix: string): number {
@@ -135,6 +179,7 @@ export class InMemoryDurableStore implements DurableStore {
 
   close(): void {
     this.#records.clear();
+    this.#works.clear();
     this.#counters.clear();
   }
 }
@@ -177,6 +222,8 @@ CREATE TABLE IF NOT EXISTS source (
   strength REAL NOT NULL,
   confidence REAL NOT NULL,
   state TEXT NOT NULL,
+  work_id TEXT,
+  locator TEXT,
   PRIMARY KEY (proposition_id, assertion_id),
   FOREIGN KEY (proposition_id) REFERENCES proposition(id) ON DELETE CASCADE
 );
@@ -193,6 +240,28 @@ CREATE TABLE IF NOT EXISTS id_sequence (
   prefix TEXT PRIMARY KEY,
   value INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS work (
+  id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL,
+  repository TEXT NOT NULL,
+  session TEXT NOT NULL,
+  title TEXT NOT NULL,
+  doi TEXT,
+  arxiv_id TEXT,
+  openalex_id TEXT,
+  semantic_scholar_id TEXT,
+  authors TEXT,
+  year INTEGER,
+  venue TEXT,
+  abstract TEXT,
+  pdf_url TEXT,
+  status TEXT NOT NULL,
+  status_notice TEXT,
+  status_date TEXT,
+  recorded_at TEXT NOT NULL,
+  revision INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS work_scope ON work(scope, repository, session);
 `;
 
 interface PropositionRow {
@@ -220,12 +289,35 @@ interface SourceRow {
   strength: number;
   confidence: number;
   state: string;
+  work_id: string | null;
+  locator: string | null;
 }
 interface DerivationRow {
   proposition_id: string;
   ordinal: number;
   rule: string;
   premises: string;
+}
+interface WorkRow {
+  id: string;
+  scope: string;
+  repository: string;
+  session: string;
+  title: string;
+  doi: string | null;
+  arxiv_id: string | null;
+  openalex_id: string | null;
+  semantic_scholar_id: string | null;
+  authors: string | null;
+  year: number | null;
+  venue: string | null;
+  abstract: string | null;
+  pdf_url: string | null;
+  status: string;
+  status_notice: string | null;
+  status_date: string | null;
+  recorded_at: string;
+  revision: number;
 }
 
 export interface SqliteDurableStoreOptions {
@@ -270,6 +362,8 @@ export class SqliteDurableStore implements DurableStore {
         strength: row.strength,
         confidence: row.confidence,
         state: row.state === "retracted" ? "retracted" : "active",
+        workId: row.work_id ?? undefined,
+        locator: row.locator ?? undefined,
       });
       sourcesBy.set(row.proposition_id, list);
     }
@@ -311,6 +405,64 @@ export class SqliteDurableStore implements DurableStore {
 
   save(record: PersistedRecord): void {
     this.transaction(() => this.#writeRecord(record, true));
+  }
+
+  allWorks(): PersistedWork[] {
+    const rows = this.#db.prepare("SELECT * FROM work").all() as WorkRow[];
+    return rows.map((row) => ({
+      id: row.id,
+      scope: row.scope,
+      repository: row.repository,
+      session: row.session,
+      title: row.title,
+      doi: row.doi ?? undefined,
+      arxivId: row.arxiv_id ?? undefined,
+      openAlexId: row.openalex_id ?? undefined,
+      semanticScholarId: row.semantic_scholar_id ?? undefined,
+      authors: row.authors ?? undefined,
+      year: row.year ?? undefined,
+      venue: row.venue ?? undefined,
+      abstract: row.abstract ?? undefined,
+      pdfUrl: row.pdf_url ?? undefined,
+      status: row.status,
+      statusNotice: row.status_notice ?? undefined,
+      statusDate: row.status_date ?? undefined,
+      recordedAt: row.recorded_at,
+      revision: row.revision,
+    }));
+  }
+
+  saveWork(work: PersistedWork): void {
+    this.transaction(() =>
+      this.#db
+        .prepare(
+          `INSERT OR REPLACE INTO work
+             (id, scope, repository, session, title, doi, arxiv_id, openalex_id, semantic_scholar_id,
+              authors, year, venue, abstract, pdf_url, status, status_notice, status_date, recorded_at, revision)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          work.id,
+          work.scope,
+          work.repository,
+          work.session,
+          work.title,
+          work.doi ?? null,
+          work.arxivId ?? null,
+          work.openAlexId ?? null,
+          work.semanticScholarId ?? null,
+          work.authors ?? null,
+          work.year ?? null,
+          work.venue ?? null,
+          work.abstract ?? null,
+          work.pdfUrl ?? null,
+          work.status,
+          work.statusNotice ?? null,
+          work.statusDate ?? null,
+          work.recordedAt,
+          work.revision,
+        ),
+    );
   }
 
   idCounter(prefix: string): number {
@@ -357,8 +509,8 @@ export class SqliteDurableStore implements DurableStore {
     this.#db.prepare("DELETE FROM source WHERE proposition_id = ?").run(record.id);
     const insertSource = this.#db.prepare(
       `INSERT INTO source
-         (proposition_id, assertion_id, ordinal, type, reference, strength, confidence, state)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (proposition_id, assertion_id, ordinal, type, reference, strength, confidence, state, work_id, locator)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     record.sources.forEach((source, ordinal) => {
       insertSource.run(
@@ -370,6 +522,8 @@ export class SqliteDurableStore implements DurableStore {
         source.strength,
         source.confidence,
         source.state,
+        source.workId ?? null,
+        source.locator ?? null,
       );
     });
     this.#db.prepare("DELETE FROM derivation WHERE proposition_id = ?").run(record.id);
