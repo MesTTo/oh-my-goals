@@ -21,10 +21,13 @@ import {
   type AddSourceResult,
   type DeriveInput,
   type MemoryKind,
+  type CitationDirection,
+  type CitationReference,
   type MemoryScope,
   type MemorySourceInput,
   type MemorySpace,
   type MemoryWorkInput,
+  type StoredCitation,
   type NotFoundError,
   type PurgeResult,
   type RememberInput,
@@ -172,6 +175,23 @@ export class SemanticMemory {
 
   worksInScope(scope: MemoryScope): readonly StoredWork[] {
     return this.#memory.worksInScope(scope);
+  }
+
+  // --- citation graph ---
+
+  /** Record the works one work cites, from its parsed references. */
+  recordCitations(citingWorkId: string, references: readonly CitationReference[]): number {
+    return this.#memory.recordCitations(citingWorkId, references);
+  }
+
+  /** The works reachable from a work along the citation graph, by MeTTa chaining. */
+  citesOf(workId: string, direction: CitationDirection, transitive: boolean): readonly string[] {
+    return this.#memory.citesOf(workId, direction, transitive);
+  }
+
+  /** The reference edges of a work, each resolved to an ingested work when known. */
+  citationEdges(workId: string): readonly StoredCitation[] {
+    return this.#memory.citationEdges(workId);
   }
 
   // --- reads ---

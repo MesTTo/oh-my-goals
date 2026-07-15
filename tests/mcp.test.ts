@@ -107,10 +107,21 @@ class StubResearchWorker implements ResearchWorker {
   readonly papers = new Map<string, ParsedPaper>();
   readonly retracted = new Set<string>();
   constructor() {
+    // A small citation chain: Attention -> prior -> grand, so traversal has depth.
     this.papers.set("1706.03762", {
       metadata: { title: "Attention Is All You Need", arxivId: "1706.03762", authors: ["Vaswani"], year: 2017, abstract: "The Transformer." },
       sections: [{ heading: "Introduction", text: "We propose the Transformer." }],
-      references: [{ raw: "Bahdanau et al. 2015", doi: "10.1/prior" }],
+      references: [{ raw: "Bahdanau et al. 2015", title: "Neural Machine Translation", doi: "10.1/prior" }],
+    });
+    this.papers.set("10.1/prior", {
+      metadata: { title: "Neural Machine Translation", doi: "10.1/prior", authors: ["Bahdanau"], year: 2015 },
+      sections: [],
+      references: [{ raw: "Sutskever 2014", title: "Sequence to Sequence Learning", doi: "10.1/grand" }],
+    });
+    this.papers.set("10.1/grand", {
+      metadata: { title: "Sequence to Sequence Learning", doi: "10.1/grand", authors: ["Sutskever"], year: 2014 },
+      sections: [],
+      references: [],
     });
     this.papers.set("10.1/bad", {
       metadata: { title: "A Contested Result", doi: "10.1/bad", authors: ["B. Author"], year: 2019 },
@@ -222,11 +233,12 @@ afterEach(async () => {
 });
 
 describe("MCP surface discovery", () => {
-  it("exposes the ten tools, two prompts, and three resources", async () => {
+  it("exposes the eleven tools, two prompts, and three resources", async () => {
     const tools = (await harness.client.listTools()).tools.map((t) => t.name).sort();
     expect(tools).toEqual([
       "add_claim",
       "check_retractions",
+      "citations",
       "explain",
       "find_papers",
       "forget",
@@ -529,5 +541,39 @@ describe("MCP paper search", () => {
   it("passes the source filter through to the worker", async () => {
     const { data } = await call(harness.client, "find_papers", { query: "x", sources: ["openAlex"] });
     expect(data.count).toBeGreaterThan(0);
+  });
+});
+
+describe("MCP citation graph", () => {
+  it("seeds edges from references on ingest and walks them both ways", async () => {
+    const a = await call(harness.client, "ingest_paper", { id: "1706.03762", scope: "project" });
+    expect(a.data.citationsRecorded).toBe(1);
+    const p = await call(harness.client, "ingest_paper", { id: "10.1/prior", scope: "project" });
+    const g = await call(harness.client, "ingest_paper", { id: "10.1/grand", scope: "project" });
+    const [aId, pId, gId] = [a.data.work.id, p.data.work.id, g.data.work.id];
+
+    // Backward chaining: what the Attention paper rests on.
+    const direct = await call(harness.client, "citations", { workId: aId, direction: "references" });
+    expect(direct.data.works.map((w: any) => w.id)).toEqual([pId]);
+    const transitive = await call(harness.client, "citations", { workId: aId, direction: "references", transitive: true });
+    expect(transitive.data.works.map((w: any) => w.id).sort()).toEqual([pId, gId].sort());
+
+    // Forward chaining: what transitively builds on the oldest paper.
+    const citedBy = await call(harness.client, "citations", { workId: gId, direction: "citedBy", transitive: true });
+    expect(citedBy.data.works.map((w: any) => w.id).sort()).toEqual([aId, pId].sort());
+  });
+
+  it("lists a cited work not yet in the library as a dangling reference", async () => {
+    const a = await call(harness.client, "ingest_paper", { id: "1706.03762", scope: "project" });
+    const refs = await call(harness.client, "citations", { workId: a.data.work.id, direction: "references" });
+    expect(refs.data.works).toHaveLength(0);
+    expect(refs.data.references).toHaveLength(1);
+    expect(refs.data.references[0].doi).toBe("10.1/prior");
+    expect(refs.data.references[0].inLibrary).toBeNull();
+  });
+
+  it("errors for an unknown work", async () => {
+    const { isError } = await call(harness.client, "citations", { workId: "work-999", direction: "references" });
+    expect(isError).toBe(true);
   });
 });

@@ -88,6 +88,23 @@ export interface PersistedWork {
   readonly revision: number;
 }
 
+/** One directed citation edge: a citing work points at a cited work by its
+ * strongest external key. The cited work resolves to an ingested work through the
+ * MeTTa `WorkKey` facts when it too is ingested; until then it is a dangling edge
+ * carrying only the reference's display title and DOI. */
+export interface PersistedCitation {
+  readonly citingWorkId: string;
+  readonly scope: string;
+  readonly repository: string;
+  readonly session: string;
+  /** The cited key type: doi, arxiv, or title. */
+  readonly citedKeyType: string;
+  readonly citedKeyValue: string;
+  readonly citedTitle: string | undefined;
+  readonly citedDoi: string | undefined;
+  readonly recordedAt: string;
+}
+
 /** Thrown by `insert` when a record id already exists. Generated ids retry with a
  * bumped counter; a caller-supplied id surfaces this as a hard error. */
 export class IdConflictError extends Error {
@@ -104,12 +121,16 @@ export interface DurableStore {
   allRecords(): PersistedRecord[];
   /** Every stored work, for rebuilding the ingested-paper set on startup. */
   allWorks(): PersistedWork[];
+  /** Every stored citation edge, for rebuilding the graph on startup. */
+  allCitations(): PersistedCitation[];
   /** Insert a new record, throwing {@link IdConflictError} if the id exists. */
   insert(record: PersistedRecord): void;
   /** Insert or replace one record and its sources and derivations. */
   save(record: PersistedRecord): void;
   /** Insert or replace one work. */
   saveWork(work: PersistedWork): void;
+  /** Insert or replace one citation edge, keyed by citing work and cited key. */
+  saveCitation(citation: PersistedCitation): void;
   /** Permanently remove a record so its content cannot be recovered. */
   purge(id: string): void;
   /** The highest id ordinal ever recorded for `prefix`. Preserved across purge so a
@@ -137,6 +158,7 @@ function cloneRecord(record: PersistedRecord): PersistedRecord {
 export class InMemoryDurableStore implements DurableStore {
   #records = new Map<string, PersistedRecord>();
   #works = new Map<string, PersistedWork>();
+  #citations = new Map<string, PersistedCitation>();
   #counters = new Map<string, number>();
 
   allRecords(): PersistedRecord[] {
@@ -147,8 +169,16 @@ export class InMemoryDurableStore implements DurableStore {
     return [...this.#works.values()].map((work) => ({ ...work }));
   }
 
+  allCitations(): PersistedCitation[] {
+    return [...this.#citations.values()].map((citation) => ({ ...citation }));
+  }
+
   saveWork(work: PersistedWork): void {
     this.#works.set(work.id, { ...work });
+  }
+
+  saveCitation(citation: PersistedCitation): void {
+    this.#citations.set(citationKey(citation), { ...citation });
   }
 
   idCounter(prefix: string): number {
@@ -180,8 +210,14 @@ export class InMemoryDurableStore implements DurableStore {
   close(): void {
     this.#records.clear();
     this.#works.clear();
+    this.#citations.clear();
     this.#counters.clear();
   }
+}
+
+/** The composite key of a citation edge: one edge per citing work and cited key. */
+function citationKey(citation: PersistedCitation): string {
+  return `${citation.citingWorkId} ${citation.citedKeyType} ${citation.citedKeyValue}`;
 }
 
 // Minimal shape of the node:sqlite objects this store uses.
@@ -262,6 +298,19 @@ CREATE TABLE IF NOT EXISTS work (
   revision INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS work_scope ON work(scope, repository, session);
+CREATE TABLE IF NOT EXISTS citation (
+  citing_work_id TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  repository TEXT NOT NULL,
+  session TEXT NOT NULL,
+  cited_key_type TEXT NOT NULL,
+  cited_key_value TEXT NOT NULL,
+  cited_title TEXT,
+  cited_doi TEXT,
+  recorded_at TEXT NOT NULL,
+  PRIMARY KEY (citing_work_id, cited_key_type, cited_key_value)
+);
+CREATE INDEX IF NOT EXISTS citation_citing ON citation(citing_work_id);
 `;
 
 interface PropositionRow {
@@ -297,6 +346,17 @@ interface DerivationRow {
   ordinal: number;
   rule: string;
   premises: string;
+}
+interface CitationRow {
+  citing_work_id: string;
+  scope: string;
+  repository: string;
+  session: string;
+  cited_key_type: string;
+  cited_key_value: string;
+  cited_title: string | null;
+  cited_doi: string | null;
+  recorded_at: string;
 }
 interface WorkRow {
   id: string;
@@ -461,6 +521,44 @@ export class SqliteDurableStore implements DurableStore {
           work.statusDate ?? null,
           work.recordedAt,
           work.revision,
+        ),
+    );
+  }
+
+  allCitations(): PersistedCitation[] {
+    const rows = this.#db.prepare("SELECT * FROM citation").all() as CitationRow[];
+    return rows.map((row) => ({
+      citingWorkId: row.citing_work_id,
+      scope: row.scope,
+      repository: row.repository,
+      session: row.session,
+      citedKeyType: row.cited_key_type,
+      citedKeyValue: row.cited_key_value,
+      citedTitle: row.cited_title ?? undefined,
+      citedDoi: row.cited_doi ?? undefined,
+      recordedAt: row.recorded_at,
+    }));
+  }
+
+  saveCitation(citation: PersistedCitation): void {
+    this.transaction(() =>
+      this.#db
+        .prepare(
+          `INSERT OR REPLACE INTO citation
+             (citing_work_id, scope, repository, session, cited_key_type, cited_key_value,
+              cited_title, cited_doi, recorded_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          citation.citingWorkId,
+          citation.scope,
+          citation.repository,
+          citation.session,
+          citation.citedKeyType,
+          citation.citedKeyValue,
+          citation.citedTitle ?? null,
+          citation.citedDoi ?? null,
+          citation.recordedAt,
         ),
     );
   }

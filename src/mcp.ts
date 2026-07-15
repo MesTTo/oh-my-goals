@@ -30,6 +30,7 @@ import {
 } from "./hyperbase.js";
 import { ingestStatements, prepareProposition, type IngestResult } from "./ingest.js";
 import {
+  type CitationDirection,
   MEMORY_KINDS,
   MEMORY_SCOPES,
   type MemoryKind,
@@ -693,11 +694,13 @@ export function createMemoryMcpServer(runtime: MemoryRuntime): McpServer {
           statusNotice: notice,
           statusDate: date,
         });
+        const citationsRecorded = memory.recordCitations(work.id, parsed.references);
         const extraction = await maybeExtractClaims(runtime, work, parsed, scope as MemoryScope, extractClaims);
         return ok(`Ingested ${work.id}${status === "active" ? "" : ` (${status})`}.`, {
           work: serializeWork(work),
           sections: parsed.sections,
           references: parsed.references,
+          citationsRecorded,
           extraction,
         });
       } catch (error) {
@@ -769,6 +772,45 @@ export function createMemoryMcpServer(runtime: MemoryRuntime): McpServer {
       } catch (error) {
         return fail(errorText(error));
       }
+    },
+  );
+
+  server.registerTool(
+    "citations",
+    {
+      title: "Citations",
+      description:
+        "Walk the citation graph of an ingested work: the works it cites (references) or the works that cite it (citedBy), one hop or transitively. Traversal is symbolic over the stored graph. For references it also lists any cited works not yet in the library.",
+      inputSchema: {
+        workId: z.string().min(1).describe("the id of an ingested work"),
+        direction: z
+          .enum(["references", "citedBy"])
+          .optional()
+          .describe('"references" (what it cites, default) or "citedBy" (what cites it)'),
+        transitive: z.boolean().optional().describe("follow the graph transitively, not just one hop"),
+      },
+    },
+    async ({ workId, direction, transitive }) => {
+      const work = memory.getWork(workId);
+      if (work === undefined) return fail(`no such work: ${workId}`);
+      const dir = (direction ?? "references") as CitationDirection;
+      const walkTransitive = transitive === true;
+      const works = memory
+        .citesOf(workId, dir, walkTransitive)
+        .map((id) => memory.getWork(id))
+        .filter((found): found is StoredWork => found !== undefined)
+        .map(serializeWork);
+      const result: Record<string, unknown> = { workId, direction: dir, transitive: walkTransitive, works };
+      // Direct references also expose the cited works not yet ingested.
+      if (dir === "references" && !walkTransitive) {
+        result.references = memory.citationEdges(workId).map((edge) => ({
+          title: edge.citedTitle ?? null,
+          doi: edge.citedDoi ?? null,
+          keyType: edge.citedKeyType,
+          inLibrary: edge.citedWorkId ?? null,
+        }));
+      }
+      return ok(`${works.length} ${dir} work(s) for ${workId}.`, result);
     },
   );
 

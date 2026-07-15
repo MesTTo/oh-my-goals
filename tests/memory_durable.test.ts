@@ -457,4 +457,26 @@ describe("MemorySpace works", () => {
     expect(space.isActive(claim.id)).toBe(true); // a correction flags, it does not invalidate
     space.close();
   });
+
+  it("rebuilds the citation graph so traversal still chains after a reopen", () => {
+    const path = dbPath();
+    const first = openSpace(path);
+    const a = first.ingestWork({ title: "Downstream", scope: "project", doi: "10.7/a" });
+    const b = first.ingestWork({ title: "Middle", scope: "project", doi: "10.7/b" });
+    const c = first.ingestWork({ title: "Foundational", scope: "project", doi: "10.7/c" });
+    first.recordCitations(a.id, [{ doi: "10.7/b" }, { title: "Not ingested yet" }]);
+    first.recordCitations(b.id, [{ doi: "10.7/c" }]);
+    // citesOf returns a sorted, frozen list, so compare against sorted expectations.
+    expect(first.citesOf(a.id, "references", true)).toEqual([b.id, c.id].sort());
+    first.close();
+
+    // The graph and its traversal survive a restart, rebuilt into the MeTTa space.
+    const second = openSpace(path);
+    expect(second.citesOf(a.id, "references", true)).toEqual([b.id, c.id].sort());
+    expect(second.citesOf(c.id, "citedBy", true)).toEqual([a.id, b.id].sort());
+    // The dangling reference is preserved but resolves to no work.
+    const dangling = second.citationEdges(a.id).find((edge) => edge.citedKeyType === "title");
+    expect(dangling?.citedWorkId).toBeUndefined();
+    second.close();
+  });
 });

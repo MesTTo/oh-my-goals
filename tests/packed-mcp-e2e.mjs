@@ -112,6 +112,7 @@ async function main() {
     assert.deepEqual(tools, [
       "add_claim",
       "check_retractions",
+      "citations",
       "explain",
       "find_papers",
       "forget",

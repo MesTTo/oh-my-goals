@@ -15,6 +15,7 @@ import {
   IdConflictError,
   InMemoryDurableStore,
   type DurableStore,
+  type PersistedCitation,
   type PersistedRecord,
   type PersistedSource,
   type PersistedWork,
@@ -29,6 +30,7 @@ import {
   mettaSymbol,
   mettaTuple,
   type GoalChainerMetta,
+  type Term,
 } from "./metta.js";
 import { assertDenseArray, assertKnownKeys, assertPlainRecord } from "./records.js";
 
@@ -123,6 +125,28 @@ export interface StoredWork {
 export type WorkStatusResult =
   | { readonly ok: true; readonly work: StoredWork; readonly invalidated: readonly string[] }
   | { readonly ok: false; readonly code: "not_found"; readonly id: string };
+
+/** One reference a work cites, as parsed from its bibliography. */
+export interface CitationReference {
+  readonly title?: string;
+  readonly doi?: string;
+  readonly arxivId?: string;
+}
+
+/** Which way to walk the citation graph: the works a work cites (references) or
+ * the works that cite it (citedBy). */
+export type CitationDirection = "references" | "citedBy";
+
+/** One stored citation edge, resolved to an ingested work when one carries the
+ * cited key, else a dangling reference known only by its title and DOI. */
+export interface StoredCitation {
+  readonly citedKeyType: string;
+  readonly citedKeyValue: string;
+  readonly citedTitle: string | undefined;
+  readonly citedDoi: string | undefined;
+  /** The ingested work this reference resolves to, when one exists. */
+  readonly citedWorkId: string | undefined;
+}
 
 export interface RememberInput {
   readonly content: string;
@@ -385,6 +409,63 @@ function blankToUndefined(value: string | undefined): string | undefined {
   return value === undefined || value.trim() === "" ? undefined : value;
 }
 
+// --- citation keys ---
+// A work and a reference must key an external identifier the same way, so a
+// reference resolves to the work through the MeTTa WorkKey facts. DOIs are
+// stripped to the bare lowercase form; a title falls back to its alphanumeric
+// skeleton, which only ever matches records that have nothing stronger.
+
+function normalizeDoiKey(doi: string): string {
+  return doi
+    .trim()
+    .toLowerCase()
+    .replace(/^doi:\s*/, "")
+    .replace(/^https?:\/\/(dx\.)?doi\.org\//, "");
+}
+
+function normalizeTitleKey(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** The key that identifies the work a reference cites, or undefined when the
+ * reference carries neither a DOI nor a usable title. */
+function citedKeyFor(reference: CitationReference): { type: string; value: string } | undefined {
+  if (reference.doi !== undefined && reference.doi.trim() !== "") {
+    return { type: "doi", value: normalizeDoiKey(reference.doi) };
+  }
+  if (reference.arxivId !== undefined && reference.arxivId.trim() !== "") {
+    return { type: "arxiv", value: reference.arxivId.trim().toLowerCase() };
+  }
+  const title = normalizeTitleKey(reference.title ?? "");
+  return title === "" ? undefined : { type: "title", value: title };
+}
+
+// Citation facts go through the metta.ts encoding adapter, like every other fact
+// this space writes, so the eDSL stays confined to that adapter. A key is a
+// `(type value)` atom, e.g. (doi "10.1/x") or (title "..."), and a work declares
+// one for each external id it carries so a reference resolves to it by key.
+function citedKeyAtom(type: string, value: string): Term {
+  return mettaCall(type, mettaString(value));
+}
+
+/** Every external key a work carries, as `(type value)` atoms. */
+function workKeyAtoms(work: PersistedWork): Term[] {
+  const keys: Term[] = [];
+  if (work.doi !== undefined) keys.push(citedKeyAtom("doi", normalizeDoiKey(work.doi)));
+  if (work.arxivId !== undefined) keys.push(citedKeyAtom("arxiv", work.arxivId.toLowerCase()));
+  if (work.openAlexId !== undefined) keys.push(citedKeyAtom("openalex", work.openAlexId.toLowerCase()));
+  if (work.semanticScholarId !== undefined) {
+    keys.push(citedKeyAtom("s2", work.semanticScholarId.toLowerCase()));
+  }
+  const title = normalizeTitleKey(work.title);
+  if (title !== "") keys.push(citedKeyAtom("title", title));
+  return keys;
+}
+
+function citationKeyOf(citation: PersistedCitation): string {
+  return `${citation.citingWorkId} ${citation.citedKeyType} ${citation.citedKeyValue}`;
+}
+
 function freezeWork(work: PersistedWork): StoredWork {
   return Object.freeze({
     id: work.id,
@@ -444,6 +525,8 @@ export class MemorySpace {
   private readonly records = new Map<string, MutableRecord>();
   // Ingested works, keyed by internal id, in persisted shape and already in scope.
   private readonly works = new Map<string, PersistedWork>();
+  // Citation edges in scope, keyed by citing work and cited key.
+  private readonly citations = new Map<string, PersistedCitation>();
   private readonly store: DurableStore;
   private readonly now: () => string;
   private readonly idPrefix: string;
@@ -618,6 +701,7 @@ export class MemorySpace {
     };
     this.works.set(id, work);
     this.store.saveWork(work);
+    this.reflectWork(work);
     this.store.bumpIdCounter(
       MemorySpace.WORK_PREFIX,
       Math.max(this.workCounter, this.maxOrdinal([id], MemorySpace.WORK_PREFIX)),
@@ -635,6 +719,98 @@ export class MemorySpace {
   worksInScope(scope: MemoryScope): readonly StoredWork[] {
     const wanted = assertMember(scope, MEMORY_SCOPES, "scope");
     return [...this.works.values()].filter((work) => work.scope === wanted).map(freezeWork);
+  }
+
+  // --- citation graph ---
+
+  /** Record the works one work cites, from its parsed references. Each reference
+   * becomes a durable edge and a `(Cites ...)` fact; a reference resolves to an
+   * ingested work through its key once that work is present. Returns the number of
+   * edges added. */
+  recordCitations(citingWorkId: string, references: readonly CitationReference[]): number {
+    const work = this.works.get(citingWorkId);
+    if (work === undefined) throw new RangeError(`no such work: ${citingWorkId}`);
+    let added = 0;
+    for (const reference of references) {
+      const key = citedKeyFor(reference);
+      if (key === undefined) continue;
+      const citation: PersistedCitation = {
+        citingWorkId,
+        scope: work.scope,
+        repository: this.repository,
+        session: this.session,
+        citedKeyType: key.type,
+        citedKeyValue: key.value,
+        citedTitle: blankToUndefined(reference.title),
+        citedDoi: reference.doi === undefined ? undefined : normalizeDoiKey(reference.doi),
+        recordedAt: this.now(),
+      };
+      const composite = citationKeyOf(citation);
+      if (this.citations.has(composite)) continue;
+      this.citations.set(composite, citation);
+      this.store.saveCitation(citation);
+      this.reflectCitation(citation);
+      added += 1;
+    }
+    return added;
+  }
+
+  /** The works reachable from a work along the citation graph: the works it cites
+   * (references) or the works that cite it (citedBy), one hop or transitively. The
+   * traversal itself is MeTTa chaining; this only maps the relation and de-dupes. */
+  citesOf(workId: string, direction: CitationDirection, transitive: boolean): readonly string[] {
+    if (!this.works.has(workId)) return Object.freeze([]);
+    const relation =
+      direction === "references"
+        ? transitive
+          ? "gc-cites-reachable"
+          : "gc-cites-step"
+        : transitive
+          ? "gc-cited-by-reachable"
+          : "gc-cited-by-step";
+    const results = this.db.evalJs(mettaCall(relation, mettaSymbol(workId)));
+    const unique = new Set<string>();
+    for (const value of results) {
+      if (typeof value === "string" && value !== workId) unique.add(value);
+    }
+    return Object.freeze([...unique].sort());
+  }
+
+  /** The reference edges of a work, resolved to an ingested work when one carries
+   * the cited key, else left dangling with the reference's own title and DOI. */
+  citationEdges(workId: string): readonly StoredCitation[] {
+    const edges: StoredCitation[] = [];
+    for (const citation of this.citations.values()) {
+      if (citation.citingWorkId !== workId) continue;
+      edges.push(
+        Object.freeze({
+          citedKeyType: citation.citedKeyType,
+          citedKeyValue: citation.citedKeyValue,
+          citedTitle: citation.citedTitle,
+          citedDoi: citation.citedDoi,
+          citedWorkId: this.resolveKey(citation.citedKeyType, citation.citedKeyValue),
+        }),
+      );
+    }
+    return Object.freeze(edges);
+  }
+
+  // The ingested work carrying a cited key, decided by MeTTa, or undefined.
+  private resolveKey(type: string, value: string): string | undefined {
+    const results = this.db.evalJs(mettaCall("gc-work-with-key", citedKeyAtom(type, value)));
+    const id = results.find((entry): entry is string => typeof entry === "string");
+    return id;
+  }
+
+  private reflectWork(work: PersistedWork): void {
+    this.db.add(mettaCall("Work", mettaSymbol(work.id), mettaSymbol(work.scope)));
+    for (const key of workKeyAtoms(work)) this.db.add(mettaCall("WorkKey", mettaSymbol(work.id), key));
+  }
+
+  private reflectCitation(citation: PersistedCitation): void {
+    this.db.add(
+      mettaCall("Cites", mettaSymbol(citation.citingWorkId), citedKeyAtom(citation.citedKeyType, citation.citedKeyValue)),
+    );
   }
 
   /** Change a work's editorial status. Retracting it retracts every active source
@@ -851,6 +1027,12 @@ export class MemorySpace {
     for (const work of works) {
       if (!this.inScope(work.scope, work.repository, work.session)) continue;
       this.works.set(work.id, { ...work });
+      this.reflectWork(work);
+    }
+    for (const citation of this.store.allCitations()) {
+      if (!this.inScope(citation.scope, citation.repository, citation.session)) continue;
+      this.citations.set(citationKeyOf(citation), { ...citation });
+      this.reflectCitation(citation);
     }
   }
 

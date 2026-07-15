@@ -2096,3 +2096,78 @@
    (match &self
       (MemoryProposition $id $scope $kind)
       (if (gc-mem-active $id) $id (empty))))
+
+; Citation graph traversal.
+; The host reflects each ingested work and its references into this space:
+;   (Work <id> <scope>)
+;   (WorkKey <id> <key>)          one per external id the work carries
+;   (Cites <citing-id> <key>)     one per reference, keyed by the cited work
+; A key is a compound external id, (doi <string>), (arxiv <string>), or
+; (title <string>), so a reference resolves to a work through WorkKey once that
+; work is ingested. Traversal is backward chaining (the works a work rests on,
+; gc-cites-*) and forward chaining (the works that build on it, gc-cited-by-*),
+; each a direct hop and the transitive reachable set. Reachability is cycle-safe
+; through a visited set. A reference with no ingested work is a dangling edge and
+; drops out of work traversal; the host reads those from the durable edge list.
+
+(: gc-cite-member (-> Atom Atom Bool))
+(: gc-work-with-key (-> Atom %Undefined%))
+(: gc-cites-step (-> Atom %Undefined%))
+(: gc-cited-by-step (-> Atom %Undefined%))
+(: gc-cites-reachable (-> Atom %Undefined%))
+(: gc-cited-by-reachable (-> Atom %Undefined%))
+(: gc-cites-reach-v (-> Atom Atom %Undefined%))
+(: gc-cited-by-reach-v (-> Atom Atom %Undefined%))
+
+; Membership over a cons-built list, on ==. The native is-member compares with
+; atomEq, which does not recognize cons-atom-built atoms as equal to a bare symbol
+; in this program's space, so the visited set is checked with == instead. One
+; guarded rule, so the empty case never reaches decons-atom.
+(= (gc-cite-member $x $seen)
+   (if (== $seen ())
+       False
+       (let ($head $tail) (decons-atom $seen)
+          (if (== $x $head) True (gc-cite-member $x $tail)))))
+
+; The ingested work carrying a given external key, for resolving a reference.
+(= (gc-work-with-key $key)
+   (match &self (WorkKey $w $key) $w))
+
+; One backward hop: the ingested works $w cites directly.
+(= (gc-cites-step $w)
+   (match &self (Cites $w $key)
+      (match &self (WorkKey $cited $key) $cited)))
+
+; One forward hop: the works that cite $w directly (an edge to any of $w's keys).
+(= (gc-cited-by-step $w)
+   (match &self (WorkKey $w $key)
+      (match &self (Cites $citing $key) $citing)))
+
+; Transitive reachability as a cycle-safe stream. The recursive result is
+; collapsed to a list and its marker dropped before the current node is consed
+; on, because a tuple holding an (empty) element collapses to nothing in MeTTa TS
+; and would otherwise drop the node the recursion just reached.
+; Each constructed list is let-bound before it is passed on, because MeTTa TS
+; re-evaluates an inline (cons-atom ...) in argument position and can misread its
+; empty tail; binding it first hands the recursion a fully reduced list.
+(= (gc-cites-reachable $w)
+   (let $seen (cons-atom $w ()) (gc-cites-reach-v $w $seen)))
+(= (gc-cites-reach-v $w $seen)
+   (let $next (gc-cites-step $w)
+      (if (gc-cite-member $next $seen)
+          (empty)
+          (let* (($seen2 (cons-atom $next $seen))
+                 ($rest (gc-collapse-tail (collapse (gc-cites-reach-v $next $seen2))))
+                 ($out (cons-atom $next $rest)))
+             (superpose $out)))))
+
+(= (gc-cited-by-reachable $w)
+   (let $seen (cons-atom $w ()) (gc-cited-by-reach-v $w $seen)))
+(= (gc-cited-by-reach-v $w $seen)
+   (let $next (gc-cited-by-step $w)
+      (if (gc-cite-member $next $seen)
+          (empty)
+          (let* (($seen2 (cons-atom $next $seen))
+                 ($rest (gc-collapse-tail (collapse (gc-cited-by-reach-v $next $seen2))))
+                 ($out (cons-atom $next $rest)))
+             (superpose $out)))))
