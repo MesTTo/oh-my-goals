@@ -211,9 +211,43 @@ async function main() {
     );
     const explained = structured(await call(client, "explain", { id: goalId }, "explain (after restart)"));
     assert.equal(explained.active, true, "the goal is still active after restart");
+
+    // The literature tools, driven through the packed artifact when a research
+    // worker is configured. arXiv and Crossref need no GROBID for metadata, so this
+    // runs the whole surface: search, ingest, claim, review, citations, retractions.
+    if ((process.env.OH_MY_GOALS_RESEARCH_PYTHON ?? "") !== "") {
+      const papers = structured(await call(client, "find_papers", { query: "attention transformer", limit: 3 }, "find_papers"));
+      assert(Array.isArray(papers.candidates), "find_papers returns candidates");
+
+      const ingested = structured(await call(client, "ingest_paper", { id: "1706.03762", scope: "project" }, "ingest_paper"));
+      const paperWorkId = ingested.work.id;
+      assert(typeof ingested.work.title === "string" && ingested.work.title.length > 0, "ingested work has a title");
+
+      const paperClaim = structured(
+        await call(
+          client,
+          "add_claim",
+          { statement: "The transformer improves translation.", workId: paperWorkId, locator: "Abstract", scope: "project" },
+          "add_claim (paper)",
+        ),
+      );
+      assert.equal(paperClaim.stored, true, "a paper claim is stored");
+
+      const review = structured(await call(client, "review", { question: "transformer translation", scope: "project" }, "review"));
+      assert(Array.isArray(review.statements), "review returns statements");
+
+      const cites = structured(await call(client, "citations", { workId: paperWorkId, direction: "references" }, "citations"));
+      assert(Array.isArray(cites.works), "citations returns a works list");
+
+      const swept = structured(await call(client, "check_retractions", { scope: "project" }, "check_retractions"));
+      assert(Array.isArray(swept.changed), "check_retractions returns a changed list");
+      console.log("  literature tools verified through the packed artifact");
+    } else {
+      console.log("  literature tools skipped: set OH_MY_GOALS_RESEARCH_PYTHON to exercise them");
+    }
     await client.close();
 
-    console.log("packed-mcp-e2e passed: install, NL query, solving, retraction, purge, and restart from the packed artifact.");
+    console.log("packed-mcp-e2e passed: install, NL query, solving, retraction, purge, restart, and the literature tools from the packed artifact.");
   } finally {
     // Close the transport before deleting the tree. A thrown assertion leaves the
     // server (and its parser child) alive holding our stdio pipe; close reaps them.

@@ -15,6 +15,15 @@ JSON decision packet, or a numeric score: the agent authors controlled English a
 the memory does the rest. The same package is an MCP server for Claude Code, Codex,
 and OpenCode, a matching Agent Skill, and a TypeScript library.
 
+The same memory is also a self-contained scientific literature assistant. Give it a
+paper by DOI or arXiv id and it fetches, parses, and stores the work with its
+retraction status, reads it into checkable claims, tracks citations, and reasons
+across papers: it corroborates a claim several works assert, surfaces contradictions
+between them, and when a paper is retracted it deactivates every claim and
+conclusion that rested on it, with a proof. The differentiator is not retrieval. It
+is a persistent, verifiable, contradiction-aware knowledge base with
+retraction-aware invalidation, all of it symbolic.
+
 > [!IMPORTANT]
 > A recommendation from Oh My Goals is advice, not authorization. The agent must
 > still enforce user approval, handler availability, and any operating-system
@@ -51,6 +60,39 @@ The parser is the local mettabase AlphaBeta parser, reached through a replaceabl
 adapter. Set `OH_MY_GOALS_METTABASE_DIR` and `OH_MY_GOALS_HYPERBASE_PYTHON` so the
 server can parse English; `install` and `install-mcp` carry those settings into the
 registered server when they are present in your environment.
+
+## Scientific literature assistant
+
+Six more MCP tools turn the same knowledge base into a research assistant over the
+scientific literature. Every mechanical part is an existing, mostly keyless open
+tool; the novel part is the symbolic layer over them.
+
+| Tool | What it does |
+| --- | --- |
+| `find_papers` | Search Semantic Scholar and OpenAlex for candidate works, ranked across sources by reciprocal rank fusion, with the ones already in your library flagged. |
+| `ingest_paper` | Fetch a paper by DOI or arXiv id, parse it through GROBID into sections and references, store it as a work with its Crossref retraction status, seed its citation edges, and, when a model is configured, read it into validated claims. |
+| `add_claim` | Store one controlled-English claim drawn from a work, sourced with a section-and-quote locator. |
+| `citations` | Walk the citation graph of a work by MeTTa chaining: the works it cites or the works that cite it, one hop or transitively, with an option to fetch the wider graph from OpenAlex. |
+| `review` | Gather the claims about a topic and read agreement and conflict across works: which statements several works corroborate, which are contradicted, each with its supporting and opposing works, a projected opinion, and warnings for a corrected or flagged source. |
+| `check_retractions` | Re-check every work against Crossref, invalidate the claims of any newly retracted or withdrawn work, and flag corrections and expressions of concern; optionally flag the retracted works you cite. |
+
+A paper is a source, so marking a work retracted is the same operation as retracting
+a source: every claim sourced from it goes inactive, every conclusion resting on
+those claims goes inactive, and `explain` names the retraction as the cause.
+Corroboration and contradiction are read as paraconsistent evidence, where a
+statement can carry support and opposition at once, then projected to a
+Subjective-Logic opinion. The grouping and the invalidation are MeTTa chaining; the
+worker only fetches and parses.
+
+The research worker is a resident Python subprocess configured by
+`OH_MY_GOALS_RESEARCH_PYTHON` (an interpreter with `scipdf_parser`),
+`OH_MY_GOALS_GROBID_URL` (a running GROBID service; without it ingestion degrades to
+metadata and references), and the polite-pool emails `OH_MY_GOALS_CROSSREF_EMAIL`
+and `OH_MY_GOALS_OPENALEX_EMAIL`. The claim extractor is an optional
+OpenAI-compatible model configured by `OH_MY_GOALS_LLM_BASE_URL`,
+`OH_MY_GOALS_LLM_MODEL`, and an optional `OH_MY_GOALS_LLM_API_KEY`, so a local
+runtime or a hosted provider both work. Without a model you supply claims through
+`add_claim`.
 
 ## A decision in one minute
 

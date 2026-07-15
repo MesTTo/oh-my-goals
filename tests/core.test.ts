@@ -684,7 +684,10 @@ describe("generic GoalChainer core", () => {
       expect(score).toBeCloseTo(0.54 + 0.38 * strength, 12);
       previous = score;
     }
-  }, 15_000);
+    // 301 full decision evaluations on the shared program. The literature relations
+    // added to oh-my-goals.metta grew it, so this stress loop needs real headroom
+    // over its per-eval cost, especially under the parallel suite's reduced CPU.
+  }, 30_000);
 
   it("is independent of 200 generated caller goal and action IDs", () => {
     for (let index = 0; index < 200; index += 1) {

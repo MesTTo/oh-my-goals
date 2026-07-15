@@ -18,6 +18,12 @@ kind, scope, and lifecycle. A recommendation from the loop is advice, never
 authorization: you still need the user's approval and an available, unblocked action
 before you act.
 
+The same memory is a scientific literature assistant, reached through six more
+tools: `find_papers`, `ingest_paper`, `add_claim`, `citations`, `review`, and
+`check_retractions`. A paper is a source, so a claim drawn from a paper stays active
+only while the paper is not retracted, and `review` reads corroboration and
+contradiction across papers. See "Scientific literature" below.
+
 ## When to use it
 
 Use Oh My Goals when a task is any of: multi-step, consequential, constrained by a
@@ -164,6 +170,38 @@ anything.
 Explain a proposition through its active premises, rules, sources, and lifecycle
 state. Field: `id`. It returns externalized reasons and proof artifacts, not model
 reasoning.
+
+## Scientific literature
+
+Use these when the task is to read, track, or reason about scientific papers. They
+share the memory loop's storage and lifecycle, so a paper is a source and its claims
+follow the same activation rules.
+
+- `find_papers` (`query`, optional `limit`, `scope`, `sources`) searches Semantic
+  Scholar and OpenAlex, ranked across sources; results already in a scope are
+  flagged so you do not re-ingest them.
+- `ingest_paper` (`id` DOI or arXiv, `scope`, optional `extractClaims`) fetches,
+  parses, and stores the work with its retraction status and citation edges. Set
+  `extractClaims` to have the configured model read it into validated claims; each
+  is parsed and checked before it is stored.
+- `add_claim` (`statement`, `workId`, `locator`, `scope`) stores one
+  controlled-English claim drawn from a work when no model is configured, or to add
+  a claim the model missed. The locator is the section and quote it rests on.
+- `citations` (`workId`, `direction` references or citedBy, optional `transitive`,
+  `external`) walks the citation graph. Use it to find what a paper rests on or what
+  builds on it.
+- `review` (`question`, `scope`, optional `limit`) gathers the claims about a topic
+  and returns structured evidence: statements several works corroborate, statements
+  that are contradicted, each with its supporting and opposing works and a projected
+  opinion. It returns evidence, not a verdict; you write the review.
+- `check_retractions` (`scope`, optional `checkReferences`) re-checks every work
+  against Crossref, invalidates the claims of a newly retracted or withdrawn work,
+  and flags corrections. With `checkReferences` it also flags the retracted works
+  you cite.
+
+When you ingest a paper and add claims from it, a later retraction deactivates those
+claims automatically. Do not assert a contradiction `review` only surfaced as a
+candidate; report it as evidence for the user to judge.
 
 ## Guardrails
 

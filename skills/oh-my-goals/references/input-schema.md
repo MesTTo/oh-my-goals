@@ -128,6 +128,66 @@ The result returns the proposition, its sources, its derivations with each premi
 active state, and whether it is currently active. These are externalized reasons and
 proof artifacts, not model reasoning.
 
+## find_papers
+
+Search Semantic Scholar and OpenAlex for candidate works, ranked across sources.
+
+```json
+{ "query": "transformer attention machine translation", "limit": 10, "scope": "project", "sources": ["openAlex"] }
+```
+
+`limit` and `sources` are optional. A `scope` flags candidates already ingested there. The result is `candidates`, each with its metadata, the `sources` that returned it, a fused `score`, and `inLibrary` set to a work id when it is already stored.
+
+## ingest_paper
+
+Fetch a paper by DOI or arXiv id, parse it, and store it as a work.
+
+```json
+{ "id": "1706.03762", "scope": "project", "extractClaims": true }
+```
+
+`extractClaims` is optional and needs a configured model. The result returns the `work` with its status, the parsed `sections` and `references`, `citationsRecorded`, and, when extraction ran, an `extraction` with the stored and dropped claims.
+
+## add_claim
+
+Store one controlled-English claim drawn from an ingested work.
+
+```json
+{ "statement": "The method improves recall.", "workId": "work-1", "locator": "Results: recall rose to 0.9", "scope": "project" }
+```
+
+`kind` is optional and defaults to `observation`. The claim stays active only while the work is not retracted. A rejected statement returns rewrite feedback and stores nothing.
+
+## citations
+
+Walk the citation graph of a work.
+
+```json
+{ "workId": "work-1", "direction": "references", "transitive": true, "external": false }
+```
+
+`direction` is `references` (what it cites) or `citedBy` (what cites it), default `references`. `transitive` follows the graph past one hop. `external` fetches the wider graph from OpenAlex as candidates. The result returns the resolved `works`, the flat `references` for a direct backward walk, and `external.candidates` when asked.
+
+## review
+
+Gather the claims about a topic and read agreement and conflict across works.
+
+```json
+{ "question": "does the method improve recall", "scope": "project", "limit": 20 }
+```
+
+The result returns `statements`, each with its representative sentence, whether it is `corroborated` or `contradicted`, its `affirming` and `negating` works, a projected `opinion`, and `statusWarnings` for a corrected or flagged source. It is evidence, not a verdict.
+
+## check_retractions
+
+Re-check every ingested work against Crossref and apply the retraction policy.
+
+```json
+{ "scope": "project", "checkReferences": true }
+```
+
+A newly retracted or withdrawn work invalidates its claims; a correction or expression of concern is flagged. The result returns each `changed` work with its `effect` and invalidated claim ids. With `checkReferences` it also returns `retractedReferences`: the retracted works you cite but have not ingested.
+
 ## Controlled English
 
 Statements must follow the controlled-English contract so the parser can store them
