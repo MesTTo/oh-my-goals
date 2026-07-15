@@ -62,6 +62,8 @@ export interface SemanticMemoryOptions {
   readonly idPrefix?: string;
   /** Semantic backend. When omitted, the facade is a pure async record memory. */
   readonly backend?: SemanticBackend;
+  /** Work statuses that invalidate a work's claims. Defaults to retracted and withdrawn. */
+  readonly invalidatingStatuses?: readonly WorkStatus[];
 }
 
 function coerceCandidatePolarity(polarity: string | undefined): CandidatePolarity {
@@ -94,6 +96,7 @@ export class SemanticMemory {
       ...(options.session !== undefined ? { session: options.session } : {}),
       ...(options.now !== undefined ? { now: options.now } : {}),
       ...(options.idPrefix !== undefined ? { idPrefix: options.idPrefix } : {}),
+      ...(options.invalidatingStatuses !== undefined ? { invalidatingStatuses: options.invalidatingStatuses } : {}),
     });
     const self = new SemanticMemory(memory, options);
     await self.#rebuildIndex();

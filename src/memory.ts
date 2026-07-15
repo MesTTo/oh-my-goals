@@ -72,6 +72,12 @@ export const WORK_STATUSES = Object.freeze([
 ] as const);
 export type WorkStatus = (typeof WORK_STATUSES)[number];
 
+/** The work statuses that invalidate a work's claims by default. Retraction and
+ * withdrawal remove a work, so the claims resting on it go inactive. A correction
+ * or an expression of concern flags the work but leaves its claims active, so the
+ * caller can weigh the notice. The set is configurable, per the design decision. */
+export const DEFAULT_INVALIDATING_STATUSES: readonly WorkStatus[] = Object.freeze(["retracted", "withdrawn"]);
+
 export interface MemorySourceInput {
   readonly type: string;
   readonly reference: string;
@@ -293,6 +299,9 @@ export interface MemorySpaceOptions {
   readonly repository?: string;
   /** Session identity; isolates session-scope records between sessions. */
   readonly session?: string;
+  /** Work statuses that invalidate a work's claims. Defaults to retracted and
+   * withdrawn; corrected and concern flag without invalidating. */
+  readonly invalidatingStatuses?: readonly WorkStatus[];
 }
 
 function nonblankString(value: unknown, path: string): string {
@@ -535,6 +544,7 @@ export class MemorySpace {
   private readonly idPattern: RegExp;
   private readonly repository: string;
   private readonly session: string;
+  private readonly invalidatingStatuses: ReadonlySet<WorkStatus>;
   private counter = 0;
   // A separate id sequence for works, kept past purge like the proposition counter.
   private static readonly WORK_PREFIX = "work";
@@ -547,6 +557,11 @@ export class MemorySpace {
     this.store = options.store ?? new InMemoryDurableStore();
     this.repository = options.repository ?? "local";
     this.session = options.session ?? "default";
+    this.invalidatingStatuses = new Set(
+      (options.invalidatingStatuses ?? DEFAULT_INVALIDATING_STATUSES).map((status) =>
+        assertMember(status, WORK_STATUSES, "invalidating status"),
+      ),
+    );
     this.load();
   }
 
@@ -878,7 +893,9 @@ export class MemorySpace {
     this.store.saveWork(updated);
 
     const invalidated: string[] = [];
-    if (nextStatus === "retracted") {
+    // Retraction and withdrawal remove the work, so its claims go inactive; a
+    // correction or expression of concern flags it but keeps the claims active.
+    if (this.invalidatingStatuses.has(nextStatus)) {
       // Snapshot the records first: retractSource mutates source state but never
       // adds or removes records, so a snapshot stays valid across the loop.
       for (const record of [...this.records.values()]) {

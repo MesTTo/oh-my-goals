@@ -252,6 +252,39 @@ function serializeCandidate(
   };
 }
 
+/** Poll the DOIs of works the library cites but has not ingested, and flag any
+ * that Crossref reports retracted, corrected, or under concern. So a caller learns
+ * when a paper it cites has itself been retracted, without ingesting it. */
+async function checkCitedReferences(
+  runtime: MemoryRuntime,
+  memory: SemanticMemory,
+  scope: MemoryScope,
+): Promise<{ checked: number; retracted: Record<string, unknown>[] }> {
+  const citedBy = new Map<string, Set<string>>();
+  for (const work of memory.worksInScope(scope)) {
+    for (const edge of memory.citationEdges(work.id)) {
+      if (edge.citedWorkId === undefined && edge.citedDoi !== undefined) {
+        const workIds = citedBy.get(edge.citedDoi) ?? new Set<string>();
+        workIds.add(work.id);
+        citedBy.set(edge.citedDoi, workIds);
+      }
+    }
+  }
+  if (citedBy.size === 0) return { checked: 0, retracted: [] };
+  const records = await runtime.researchWorker.retractionStatus([...citedBy.keys()]);
+  const retracted: Record<string, unknown>[] = [];
+  for (const record of records) {
+    if (record.status === "active") continue;
+    retracted.push({
+      doi: record.doi,
+      status: record.status,
+      notice: record.notice ?? null,
+      citedBy: [...(citedBy.get(record.doi) ?? [])].sort(),
+    });
+  }
+  return { checked: citedBy.size, retracted };
+}
+
 /** Auto-extract validated claims from a freshly ingested work, when requested and
  * a model is configured. Returns null when extraction was not asked for, a note
  * when asked for without a model, else the extraction outcome. Each claim is
@@ -751,25 +784,47 @@ export function createMemoryMcpServer(runtime: MemoryRuntime): McpServer {
     {
       title: "Check retractions",
       description:
-        "Re-check every ingested work in a scope against Crossref and invalidate the claims of any newly retracted work. Reports the works whose status changed and the claims that were invalidated.",
-      inputSchema: { scope: scopeEnum },
+        "Re-check every ingested work in a scope against Crossref. A newly retracted or withdrawn work invalidates its claims; a correction or expression of concern is flagged without invalidating. Reports each work whose status changed with its effect. Set checkReferences to also poll the cited works not in your library and warn when one you cite is retracted.",
+      inputSchema: {
+        scope: scopeEnum,
+        checkReferences: z
+          .boolean()
+          .optional()
+          .describe("also check the DOIs of cited works not in the library, and flag any that are retracted"),
+      },
     },
-    async ({ scope }) => {
+    async ({ scope, checkReferences }) => {
       try {
         const works = memory.worksInScope(scope as MemoryScope).filter((work) => work.doi !== undefined);
-        if (works.length === 0) return ok("No works with a DOI to check.", { changed: [] });
-        const records = await runtime.researchWorker.retractionStatus(works.map((work) => work.doi!));
-        const byDoi = new Map(records.map((record) => [record.doi, record]));
         const changed: Record<string, unknown>[] = [];
-        for (const work of works) {
-          const record = byDoi.get(work.doi!);
-          if (record === undefined || record.status === work.status) continue;
-          const result = await memory.setWorkStatus(work.id, record.status, record.notice, record.date);
-          if (result.ok) {
-            changed.push({ workId: work.id, doi: work.doi, from: work.status, to: record.status, invalidated: result.invalidated });
+        if (works.length > 0) {
+          const records = await runtime.researchWorker.retractionStatus(works.map((work) => work.doi!));
+          const byDoi = new Map(records.map((record) => [record.doi, record]));
+          for (const work of works) {
+            const record = byDoi.get(work.doi!);
+            if (record === undefined || record.status === work.status) continue;
+            const result = await memory.setWorkStatus(work.id, record.status, record.notice, record.date);
+            if (result.ok) {
+              changed.push({
+                workId: work.id,
+                doi: work.doi,
+                from: work.status,
+                to: record.status,
+                effect: result.invalidated.length > 0 ? "invalidated" : "flagged",
+                invalidated: result.invalidated,
+              });
+            }
           }
         }
-        return ok(`Checked ${works.length} work(s); ${changed.length} changed.`, { changed });
+        const result: Record<string, unknown> = { checked: works.length, changed };
+        let summary = `Checked ${works.length} work(s); ${changed.length} changed.`;
+        if (checkReferences === true) {
+          const flagged = await checkCitedReferences(runtime, memory, scope as MemoryScope);
+          result.referencesChecked = flagged.checked;
+          result.retractedReferences = flagged.retracted;
+          summary += ` ${flagged.retracted.length} cited work(s) flagged.`;
+        }
+        return ok(summary, result);
       } catch (error) {
         return fail(errorText(error));
       }

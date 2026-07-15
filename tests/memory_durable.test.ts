@@ -458,6 +458,39 @@ describe("MemorySpace works", () => {
     space.close();
   });
 
+  it("withdraws a work like a retraction, invalidating its claims", () => {
+    const space = openSpace(dbPath());
+    const work = space.ingestWork({ title: "Withdrawn", scope: "project", doi: "10.6/w" });
+    const claim = space.remember({
+      content: "The withdrawn result holds.",
+      scope: "project",
+      kind: "observation",
+      sources: [{ type: "paper", reference: work.doi!, workId: work.id, locator: "Results" }],
+    });
+    expect(space.isActive(claim.id)).toBe(true);
+    const result = space.setWorkStatus(work.id, "withdrawn");
+    expect(result.invalidated).toContain(claim.id);
+    expect(space.isActive(claim.id)).toBe(false);
+    space.close();
+  });
+
+  it("honors a configured invalidation policy", () => {
+    // Only retraction invalidates here, so a withdrawal merely flags.
+    const space = openSpace(dbPath(), { invalidatingStatuses: ["retracted"] });
+    const work = space.ingestWork({ title: "Retraction-only policy", scope: "project", doi: "10.6/p" });
+    const claim = space.remember({
+      content: "The finding stands.",
+      scope: "project",
+      kind: "observation",
+      sources: [{ type: "paper", reference: work.doi!, workId: work.id, locator: "Results" }],
+    });
+    space.setWorkStatus(work.id, "withdrawn");
+    expect(space.isActive(claim.id)).toBe(true); // withdrawn is not in this policy
+    space.setWorkStatus(work.id, "retracted");
+    expect(space.isActive(claim.id)).toBe(false);
+    space.close();
+  });
+
   it("rebuilds claim cores so contradiction still reads after a reopen", () => {
     // A minimal relation tree; claimCore reads its predicate and arguments.
     const shTree = (verb: string, subject: string, object: string): string =>

@@ -501,7 +501,20 @@ describe("MCP paper ingestion and retraction", () => {
     expect(check.isError).toBe(false);
     expect(check.data.changed).toHaveLength(1);
     expect(check.data.changed[0].to).toBe("retracted");
+    expect(check.data.changed[0].effect).toBe("invalidated");
     expect(check.data.changed[0].invalidated).toContain(claimId);
+  });
+
+  it("flags a cited work that is retracted without ingesting it", async () => {
+    // The Attention paper cites 10.1/prior; we do not ingest that reference.
+    const ingest = await call(harness.client, "ingest_paper", { id: "1706.03762", scope: "project" });
+    harness.worker.retracted.add("10.1/prior");
+    const check = await call(harness.client, "check_retractions", { scope: "project", checkReferences: true });
+    expect(check.isError).toBe(false);
+    const flagged = check.data.retractedReferences.find((r: any) => r.doi === "10.1/prior");
+    expect(flagged).toBeDefined();
+    expect(flagged.status).toBe("retracted");
+    expect(flagged.citedBy).toContain(ingest.data.work.id);
   });
 
   it("reports a clear error when no research worker is configured", async () => {
