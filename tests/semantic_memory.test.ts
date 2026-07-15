@@ -112,6 +112,24 @@ describe("SemanticMemory forget removes candidates", () => {
     memory.close();
   });
 
+  it("drops a claim from search when the work it cites is retracted", async () => {
+    const memory = await SemanticMemory.open({ backend: backend() });
+    const work = await memory.ingestWork({ title: "A study", scope: "project", doi: "10.7/w" });
+    const claim = await memory.remember(
+      fact("the database uses postgres", sentenceTree("database", "postgres"), {
+        sources: [{ type: "paper", reference: work.doi!, workId: work.id, locator: "Results" }],
+      }),
+    );
+    expect(await found(memory, "postgres database")).toContain(claim.id);
+
+    const result = await memory.setWorkStatus(work.id, "retracted");
+    expect(result.ok).toBe(true);
+    expect(memory.isActive(claim.id)).toBe(false);
+    expect(await found(memory, "postgres database")).not.toContain(claim.id);
+    expect(memory.getWork(work.id)!.status).toBe("retracted");
+    memory.close();
+  });
+
   it("drops a purged proposition from search", async () => {
     const memory = await SemanticMemory.open({ backend: backend() });
     const stored = await memory.remember(POSTGRES);

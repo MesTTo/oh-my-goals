@@ -24,13 +24,17 @@ import {
   type MemoryScope,
   type MemorySourceInput,
   type MemorySpace,
+  type MemoryWorkInput,
   type NotFoundError,
   type PurgeResult,
   type RememberInput,
   type RetractResult,
   type RetractSourceResult,
   type StoredProposition,
+  type StoredWork,
   type SupersedeResult,
+  type WorkStatus,
+  type WorkStatusResult,
 } from "./memory.js";
 import type { DurableStore } from "./durable_store.js";
 import {
@@ -141,6 +145,33 @@ export class SemanticMemory {
 
   async purge(id: string, expectedRevision?: number): Promise<PurgeResult> {
     return this.#reconcile(() => this.#memory.purge(id, expectedRevision));
+  }
+
+  // --- works ---
+
+  /** Store a paper as a work, or return the existing one when an external id
+   * matches in scope. A work carries no candidates itself, so no reindex. */
+  async ingestWork(input: MemoryWorkInput): Promise<StoredWork> {
+    return this.#memory.ingestWork(input);
+  }
+
+  /** Change a work's status. Retracting it deactivates the claims that cite it,
+   * so reconcile drops their candidates from the index. */
+  async setWorkStatus(
+    id: string,
+    status: WorkStatus,
+    notice?: string,
+    date?: string,
+  ): Promise<WorkStatusResult> {
+    return this.#reconcile(() => this.#memory.setWorkStatus(id, status, notice, date));
+  }
+
+  getWork(id: string): StoredWork | undefined {
+    return this.#memory.getWork(id);
+  }
+
+  worksInScope(scope: MemoryScope): readonly StoredWork[] {
+    return this.#memory.worksInScope(scope);
   }
 
   // --- reads ---
