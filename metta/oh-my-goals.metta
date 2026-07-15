@@ -2171,3 +2171,40 @@
                  ($rest (gc-collapse-tail (collapse (gc-cited-by-reach-v $next $seen2))))
                  ($out (cons-atom $next $rest)))
              (superpose $out)))))
+
+; Statement grouping and paraconsistent agreement.
+; The host reflects each claim's logical core as
+;   (ClaimCore <claim-id> <core-key> <polarity> <unit>)
+; where the core is the claim's predicate and arguments with polarity stripped, so
+; two claims share a core when they are about the same statement, and the unit is
+; the work asserting it. Corroboration is a statement several works assert;
+; contradiction is a statement some works assert and others negate (the paraconsistent
+; pi-PLN state: positive and negative evidence held at once). The host counts the
+; distinct units and projects them to an opinion through gc-snars-assess.
+
+(: gc-claim-core (-> Atom %Undefined%))
+(: gc-core-claims (-> Atom Atom %Undefined%))
+(: gc-core-units (-> Atom Atom %Undefined%))
+(: gc-core-has (-> Atom Atom Bool))
+(: gc-core-contradicted (-> Atom Bool))
+
+; The core, polarity, and asserting unit of a claim, as a (core ...) row.
+(= (gc-claim-core $claim)
+   (match &self (ClaimCore $claim $core $polarity $unit) (core $core $polarity $unit)))
+
+; Active claims about a statement with a given polarity.
+(= (gc-core-claims $core $polarity)
+   (match &self (ClaimCore $claim $core $polarity $unit)
+      (if (gc-mem-active $claim) $claim (empty))))
+
+; The asserting units of a statement with a given polarity, active claims only.
+(= (gc-core-units $core $polarity)
+   (match &self (ClaimCore $claim $core $polarity $unit)
+      (if (gc-mem-active $claim) $unit (empty))))
+
+; Whether a statement has an active claim of a polarity, and whether it is
+; contradicted: asserted and negated by active claims at once.
+(= (gc-core-has $core $polarity)
+   (gc-mem-nonempty (collapse (gc-core-units $core $polarity))))
+(= (gc-core-contradicted $core)
+   (and (gc-core-has $core affirmative) (gc-core-has $core negated)))

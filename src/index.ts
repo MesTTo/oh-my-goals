@@ -25,6 +25,8 @@ export * from "./research.js";
 export * from "./research_worker.js";
 export * from "./paper_search.js";
 export * from "./extractor.js";
+export * from "./claim_core.js";
+export * from "./review.js";
 export * from "./ingest.js";
 export * from "./embedding.js";
 export * from "./transformers_embedding.js";

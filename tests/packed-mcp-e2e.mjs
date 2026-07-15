@@ -119,6 +119,7 @@ async function main() {
       "ingest_paper",
       "query",
       "remember",
+      "review",
       "revise",
       "solve",
     ]);

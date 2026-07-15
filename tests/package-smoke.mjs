@@ -118,6 +118,7 @@ try {
   const moduleStems = [
     "bibliography",
     "candidates",
+    "claim_core",
     "cli",
     "core",
     "deontic",
@@ -149,6 +150,7 @@ try {
     "records",
     "research",
     "research_worker",
+    "review",
     "rounding",
     "score",
     "semantic",

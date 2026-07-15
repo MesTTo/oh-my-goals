@@ -458,6 +458,48 @@ describe("MemorySpace works", () => {
     space.close();
   });
 
+  it("rebuilds claim cores so contradiction still reads after a reopen", () => {
+    // A minimal relation tree; claimCore reads its predicate and arguments.
+    const shTree = (verb: string, subject: string, object: string): string =>
+      JSON.stringify({
+        atom: false,
+        edgeStr: "()",
+        mainType: "R",
+        type: "Rv",
+        argroles: "so",
+        connector: { atom: true, atomStr: "", root: verb, label: verb, mainType: "P", type: "Pv", role: "Pv.so" },
+        children: [
+          { atom: true, atomStr: "", root: subject, label: subject, mainType: "C", type: "Cc", role: "Cc" },
+          { atom: true, atomStr: "", root: object, label: object, mainType: "C", type: "Cc", role: "Cc" },
+        ],
+      });
+    const path = dbPath();
+    const first = openSpace(path);
+    const a = first.ingestWork({ title: "Asserts", scope: "project", doi: "10.8/a" });
+    const b = first.ingestWork({ title: "Negates", scope: "project", doi: "10.8/b" });
+    const claim = (workId: string, doi: string, polarity: string) =>
+      first.remember({
+        content: `The method improves recall (${polarity}).`,
+        scope: "project",
+        kind: "observation",
+        sources: [{ type: "paper", reference: doi, workId, locator: "Results" }],
+        tree: "typed",
+        shTree: shTree("improves", "method", "recall"),
+        polarity,
+      });
+    claim(a.id, "10.8/a", "affirmative");
+    claim(b.id, "10.8/b", "negated");
+    const core = "improve(o:recall,s:method)";
+    expect(first.coreContradicted(core)).toBe(true);
+    first.close();
+
+    const second = openSpace(path);
+    expect(second.coreContradicted(core)).toBe(true);
+    expect(second.coreUnits(core, "affirmative")).toEqual([a.id]);
+    expect(second.coreUnits(core, "negated")).toEqual([b.id]);
+    second.close();
+  });
+
   it("rebuilds the citation graph so traversal still chains after a reopen", () => {
     const path = dbPath();
     const first = openSpace(path);

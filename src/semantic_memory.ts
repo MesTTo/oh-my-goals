@@ -194,6 +194,24 @@ export class SemanticMemory {
     return this.#memory.citationEdges(workId);
   }
 
+  // --- statement grouping: corroboration and contradiction ---
+
+  claimCoreRow(claimId: string): { core: string; polarity: string; unit: string } | null {
+    return this.#memory.claimCoreRow(claimId);
+  }
+
+  coreClaims(core: string, polarity: string): readonly string[] {
+    return this.#memory.coreClaims(core, polarity);
+  }
+
+  coreUnits(core: string, polarity: string): readonly string[] {
+    return this.#memory.coreUnits(core, polarity);
+  }
+
+  coreContradicted(core: string): boolean {
+    return this.#memory.coreContradicted(core);
+  }
+
   // --- reads ---
 
   /** Top active propositions matching a query in one scope. A proposition

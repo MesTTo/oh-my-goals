@@ -43,6 +43,7 @@ import type { DurableStore } from "./durable_store.js";
 import { SqliteDurableStore } from "./durable_store.js";
 import { rankCandidates } from "./paper_search.js";
 import { queryMemory } from "./query.js";
+import { reviewClaims } from "./review.js";
 import type { CandidateSource, ParsedPaper, ResearchWorker, WorkCandidate } from "./research.js";
 import { createResearchWorker } from "./research_worker.js";
 import { SemanticBackend } from "./semantic.js";
@@ -830,6 +831,36 @@ export function createMemoryMcpServer(runtime: MemoryRuntime): McpServer {
         }
       }
       return ok(`${works.length} ${dir} work(s) for ${workId}.`, result);
+    },
+  );
+
+  server.registerTool(
+    "review",
+    {
+      title: "Review",
+      description:
+        "Gather the claims about a topic across ingested works and read agreement and conflict over them: which statements several works corroborate, which are contradicted (asserted by some works and negated by others), each with its supporting and opposing works, a projected opinion, and warnings for any retracted source. Returns structured evidence for you to write up; it asserts nothing the symbolic layer did not decide.",
+      inputSchema: {
+        question: z.string().min(1).describe("the topic or question to review the literature on"),
+        scope: scopeEnum,
+        limit: z.number().int().min(1).max(100).optional().describe("claims to retrieve before grouping, default 20"),
+      },
+    },
+    async ({ question, scope, limit }) => {
+      try {
+        const result = await reviewClaims(memory, question, scope as MemoryScope, {
+          ...(limit !== undefined ? { topK: limit } : {}),
+        });
+        const contradicted = result.statements.filter((statement) => statement.contradicted).length;
+        const corroborated = result.statements.filter((statement) => statement.corroborated).length;
+        return ok(
+          `Reviewed ${result.statements.length} statement(s) on ${JSON.stringify(question)}: ` +
+            `${corroborated} corroborated, ${contradicted} contradicted.`,
+          result as unknown as Record<string, unknown>,
+        );
+      } catch (error) {
+        return fail(errorText(error));
+      }
     },
   );
 

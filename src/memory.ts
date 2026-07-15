@@ -21,6 +21,8 @@ import {
   type PersistedWork,
 } from "./durable_store.js";
 import type { BibliographicFields } from "./bibliography.js";
+import { claimCore } from "./claim_core.js";
+import type { ShNode } from "./hyperbase.js";
 import {
   createGoalChainerMetta,
   mettaCall,
@@ -813,6 +815,50 @@ export class MemorySpace {
     );
   }
 
+  // --- statement grouping: corroboration and contradiction ---
+
+  /** The logical core, polarity, and asserting unit of a claim, decided by MeTTa
+   * over its reflected ClaimCore fact, or null when the claim has no relational
+   * core (nothing to group or contradict on). */
+  claimCoreRow(claimId: string): { core: string; polarity: string; unit: string } | null {
+    const results = this.db.evalJs(mettaCall("gc-claim-core", mettaSymbol(claimId)));
+    for (const row of results) {
+      if (
+        Array.isArray(row) &&
+        row.length === 4 &&
+        row[0] === "core" &&
+        typeof row[1] === "string" &&
+        typeof row[2] === "string" &&
+        typeof row[3] === "string"
+      ) {
+        return { core: row[1], polarity: row[2], unit: row[3] };
+      }
+    }
+    return null;
+  }
+
+  /** The active claims asserting a statement (core) with a polarity. */
+  coreClaims(core: string, polarity: string): readonly string[] {
+    return this.uniqueStrings(this.db.evalJs(mettaCall("gc-core-claims", mettaString(core), mettaSymbol(polarity))));
+  }
+
+  /** The distinct works asserting a statement (core) with a polarity. */
+  coreUnits(core: string, polarity: string): readonly string[] {
+    return this.uniqueStrings(this.db.evalJs(mettaCall("gc-core-units", mettaString(core), mettaSymbol(polarity))));
+  }
+
+  /** Whether a statement is contradicted: asserted and negated by active works at
+   * once. The paraconsistent test is decided in MeTTa. */
+  coreContradicted(core: string): boolean {
+    return this.db.evalJs(mettaCall("gc-core-contradicted", mettaString(core)))[0] === true;
+  }
+
+  private uniqueStrings(values: readonly unknown[]): readonly string[] {
+    const unique = new Set<string>();
+    for (const value of values) if (typeof value === "string") unique.add(value);
+    return Object.freeze([...unique].sort());
+  }
+
   /** Change a work's editorial status. Retracting it retracts every active source
    * that cites it, so the existing reverse-invalidation deactivates the dependent
    * claims and any conclusions resting on them. The other statuses are recorded
@@ -1211,6 +1257,8 @@ export class MemorySpace {
     if (record.tree !== undefined) {
       this.db.remove(mettaCall("MemoryTree", mettaSymbol(record.id), mettaString(record.tree)));
     }
+    const core = this.claimCoreFact(record);
+    if (core !== null) this.db.remove(core);
     for (const source of record.sources) {
       this.db.remove(mettaCall("MemorySource", mettaSymbol(record.id), mettaSymbol(source.assertionId), mettaSymbol(source.type), mettaString(source.reference)));
       this.db.remove(mettaCall("MemoryAssertionState", mettaSymbol(record.id), mettaSymbol(source.assertionId), mettaSymbol(source.state)));
@@ -1249,6 +1297,30 @@ export class MemorySpace {
     if (record.tree !== undefined) {
       this.db.add(mettaCall("MemoryTree", mettaSymbol(record.id), mettaString(record.tree)));
     }
+    const core = this.claimCoreFact(record);
+    if (core !== null) this.db.add(core);
+  }
+
+  // The ClaimCore fact of a record: its logical core, polarity, and the work that
+  // asserts it, so MeTTa can group claims into statements and read corroboration
+  // and contradiction across works. Null when the tree yields no relational core.
+  private claimCoreFact(record: MutableRecord): ReturnType<typeof mettaCall> | null {
+    if (record.shTree === undefined || record.polarity === undefined) return null;
+    let core: ReturnType<typeof claimCore>;
+    try {
+      core = claimCore(JSON.parse(record.shTree) as ShNode);
+    } catch {
+      return null;
+    }
+    if (core === null) return null;
+    const unit = record.sources.find((source) => source.workId !== undefined)?.workId ?? `own-${record.id}`;
+    return mettaCall(
+      "ClaimCore",
+      mettaSymbol(record.id),
+      mettaString(core.key),
+      mettaSymbol(record.polarity),
+      mettaSymbol(unit),
+    );
   }
 
   private writeSourceFacts(record: MutableRecord, source: MutableSource): void {

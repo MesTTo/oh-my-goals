@@ -69,6 +69,8 @@ const REVIEW_B = "The reviewer approved a_adapter.";
 const BAD = "Do this and that and everything at once.";
 const CLAIM = "The transformer improves translation.";
 const CLAIM2 = "The transformer reduces the cost.";
+// Same core as CLAIM, opposite polarity: a contradiction when from another work.
+const CLAIM_NEG = "The transformer does not improve translation.";
 // A claim the extractor proposes that the stub parser rejects until it is rewritten.
 const NEEDS_REWRITE = "needs a rewrite before it will parse";
 const NEVER_PARSES = "never parses no matter what";
@@ -90,6 +92,7 @@ class StubParser implements HyperbaseParser {
     put(accepted(REVIEW_B, relation("approved", np1("the", "reviewer"), plus("action", "a_adapter")), "declarative"));
     put(accepted(CLAIM, relation("improves", plus("model", "transformer"), np1("the", "translation")), "declarative"));
     put(accepted(CLAIM2, relation("reduces", plus("model", "transformer"), np1("the", "cost")), "declarative"));
+    put(accepted(CLAIM_NEG, relation("improve", plus("model", "transformer"), np1("the", "translation")), "declarative", "negated"));
     put(rejected(BAD));
   }
   async parse(statements: readonly string[]): Promise<HyperbaseParseBatch> {
@@ -239,7 +242,7 @@ afterEach(async () => {
 });
 
 describe("MCP surface discovery", () => {
-  it("exposes the eleven tools, two prompts, and three resources", async () => {
+  it("exposes the twelve tools, two prompts, and three resources", async () => {
     const tools = (await harness.client.listTools()).tools.map((t) => t.name).sort();
     expect(tools).toEqual([
       "add_claim",
@@ -251,6 +254,7 @@ describe("MCP surface discovery", () => {
       "ingest_paper",
       "query",
       "remember",
+      "review",
       "revise",
       "solve",
     ]);
@@ -591,5 +595,50 @@ describe("MCP citation graph", () => {
     expect(refs.data.external.candidates[0].doi).toBe("10.9/extref");
     const citedBy = await call(harness.client, "citations", { workId, direction: "citedBy", external: true });
     expect(citedBy.data.external.candidates[0].doi).toBe("10.9/extcite");
+  });
+});
+
+describe("MCP review", () => {
+  const ingestWork = async (id: string): Promise<string> =>
+    (await call(harness.client, "ingest_paper", { id, scope: "project" })).data.work.id;
+  const addClaim = (statement: string, workId: string) =>
+    call(harness.client, "add_claim", { statement, workId, locator: "Results", scope: "project" });
+
+  it("reads contradiction and corroboration across works with a projected opinion", async () => {
+    const [wA, wB, wC, wD] = await Promise.all([
+      ingestWork("1706.03762"),
+      ingestWork("10.1/prior"),
+      ingestWork("10.1/grand"),
+      ingestWork("10.1/bad"),
+    ]);
+    await addClaim(CLAIM, wA); // affirmative
+    await addClaim(CLAIM_NEG, wB); // negated: contradicts CLAIM
+    await addClaim(CLAIM2, wC); // affirmative
+    await addClaim(CLAIM2, wD); // affirmative: corroborates
+
+    const byContradiction = await call(harness.client, "review", { question: "transformer translation", scope: "project" });
+    const improve = byContradiction.data.statements.find((s: any) => s.core.startsWith("improve"));
+    expect(improve.contradicted).toBe(true);
+    expect(improve.affirming).toHaveLength(1);
+    expect(improve.negating).toHaveLength(1);
+    // The paraconsistent projection carries belief and disbelief at once.
+    expect(improve.opinion.belief).toBeGreaterThan(0);
+    expect(improve.opinion.disbelief).toBeGreaterThan(0);
+
+    const byCorroboration = await call(harness.client, "review", { question: "transformer cost", scope: "project" });
+    const reduce = byCorroboration.data.statements.find((s: any) => s.core.startsWith("reduce"));
+    expect(reduce.corroborated).toBe(true);
+    expect(reduce.affirming.map((r: any) => r.workId).sort()).toEqual([wC, wD].sort());
+    expect(reduce.opinion.disbelief).toBe(0);
+  });
+
+  it("warns when a contributing work is corrected but still active", async () => {
+    const work = await ingestWork("1706.03762");
+    await addClaim(CLAIM, work);
+    // A correction flags the work without invalidating its claim.
+    await harness.runtime.memory.setWorkStatus(work, "corrected", "10.x/correction");
+    const review = await call(harness.client, "review", { question: "transformer translation", scope: "project" });
+    const improve = review.data.statements.find((s: any) => s.core.startsWith("improve"));
+    expect(improve.statusWarnings.some((w: string) => w.includes("corrected"))).toBe(true);
   });
 });
