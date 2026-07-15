@@ -17,12 +17,11 @@
 // fails closed with a clear installation error rather than falling back to a
 // shallow renderer.
 
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import { delimiter as pathDelimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { assertDenseArray, assertPlainRecord } from "./records.js";
+import { ResidentJsonTransport, type SpawnSpec } from "./subprocess_worker.js";
 
 // The nine controlled-English rules the instruction layer asks agents to follow.
 // A rejected parse is returned to the agent with these as rewrite guidance.
@@ -47,7 +46,6 @@ const DEFAULT_LANG = "en";
 const DEFAULT_MAX_PARSE_TIME_SECONDS = 10;
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 const MAX_TREE_DEPTH = 64;
-const STDERR_TAIL_LINES = 40;
 
 const DEFAULT_WORKER_SCRIPT = fileURLToPath(
   new URL("../assets/hb_worker.py", import.meta.url),
@@ -498,16 +496,19 @@ interface PendingRequest {
 /** Drives the resident AlphaBeta worker over a serialized line-framed protocol. */
 export class AlphaBetaHyperbaseParser implements HyperbaseParser {
   readonly #resolution: ResolvedConfig | { error: string };
-  #child: ChildProcessWithoutNullStreams | null = null;
-  #reader: ReadlineInterface | null = null;
+  readonly #transport: ResidentJsonTransport;
   #pending: PendingRequest[] = [];
   #queue: Promise<unknown> = Promise.resolve();
-  #stderrTail: string[] = [];
-  #closed = false;
 
   constructor(config: AlphaBetaConfig = {}) {
     assertPlainRecord(config, "hyperbase config");
     this.#resolution = resolveConfig(config);
+    this.#transport = new ResidentJsonTransport(
+      () => this.#spawnSpec(),
+      () => new HyperbaseUnavailableError("HyperBase parser is closed"),
+      this.#onLine.bind(this),
+      this.#onWorkerError.bind(this),
+    );
   }
 
   async parse(statements: readonly string[]): Promise<HyperbaseParseBatch> {
@@ -560,23 +561,7 @@ export class AlphaBetaHyperbaseParser implements HyperbaseParser {
   }
 
   async close(): Promise<void> {
-    this.#closed = true;
-    const child = this.#child;
-    this.#child = null;
-    this.#reader?.close();
-    this.#reader = null;
-    if (child === null || child.exitCode !== null || child.signalCode !== null) {
-      return;
-    }
-    await new Promise<void>((resolve) => {
-      const forceKill = setTimeout(() => child.kill("SIGKILL"), 2_000);
-      child.once("exit", () => {
-        clearTimeout(forceKill);
-        resolve();
-      });
-      child.stdin.end();
-      child.kill("SIGTERM");
-    });
+    await this.#transport.close();
   }
 
   #requireConfig(): ResolvedConfig {
@@ -584,6 +569,16 @@ export class AlphaBetaHyperbaseParser implements HyperbaseParser {
       throw new HyperbaseUnavailableError(this.#resolution.error);
     }
     return this.#resolution;
+  }
+
+  #spawnSpec(): SpawnSpec {
+    const config = this.#requireConfig();
+    return {
+      command: config.pythonPath,
+      args: [config.workerScript],
+      cwd: config.mettabaseDir,
+      env: childEnv(config),
+    };
   }
 
   #request(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -600,20 +595,13 @@ export class AlphaBetaHyperbaseParser implements HyperbaseParser {
 
   #sendOne(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     return new Promise((resolve, reject) => {
-      let child: ChildProcessWithoutNullStreams;
-      try {
-        child = this.#ensureChild();
-      } catch (error) {
-        reject(error instanceof Error ? error : new Error(String(error)));
-        return;
-      }
       const config = this.#requireConfig();
       const request: PendingRequest = {
         resolve,
         reject,
         timer: setTimeout(() => {
           this.#drop(request);
-          this.#killChild();
+          this.#transport.kill();
           reject(
             new HyperbaseWorkerError(
               `HyperBase worker timed out after ${config.requestTimeoutMs} ms`,
@@ -622,46 +610,13 @@ export class AlphaBetaHyperbaseParser implements HyperbaseParser {
         }, config.requestTimeoutMs),
       };
       this.#pending.push(request);
-      child.stdin.write(`${JSON.stringify(payload)}\n`);
+      try {
+        this.#transport.writeJson(payload);
+      } catch (error) {
+        this.#drop(request);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
-  }
-
-  #ensureChild(): ChildProcessWithoutNullStreams {
-    if (this.#closed) {
-      throw new HyperbaseUnavailableError("HyperBase parser is closed");
-    }
-    const config = this.#requireConfig();
-    if (this.#child !== null && this.#child.exitCode === null && this.#child.signalCode === null) {
-      return this.#child;
-    }
-    const child = spawn(config.pythonPath, [config.workerScript], {
-      cwd: config.mettabaseDir,
-      env: childEnv(config),
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    this.#child = child;
-    this.#stderrTail = [];
-    child.stdin.on("error", () => {});
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => this.#recordStderr(chunk));
-    const reader = createInterface({ input: child.stdout });
-    this.#reader = reader;
-    reader.on("line", (line) => this.#onLine(line));
-    child.on("error", (error) => this.#onExit(child, `spawn failed: ${error.message}`));
-    child.on("exit", (code, signal) =>
-      this.#onExit(child, `worker exited (code ${code ?? "null"}, signal ${signal ?? "null"})`),
-    );
-    return child;
-  }
-
-  #recordStderr(chunk: string): void {
-    for (const line of chunk.split("\n")) {
-      if (line.trim() === "") continue;
-      this.#stderrTail.push(line);
-    }
-    if (this.#stderrTail.length > STDERR_TAIL_LINES) {
-      this.#stderrTail = this.#stderrTail.slice(-STDERR_TAIL_LINES);
-    }
   }
 
   #onLine(line: string): void {
@@ -682,32 +637,18 @@ export class AlphaBetaHyperbaseParser implements HyperbaseParser {
     }
   }
 
-  #onExit(child: ChildProcessWithoutNullStreams, reason: string): void {
-    if (this.#child === child) {
-      this.#child = null;
-      this.#reader?.close();
-      this.#reader = null;
-    }
-    const tail = this.#stderrTail.length > 0 ? `\n${this.#stderrTail.join("\n")}` : "";
+  #onWorkerError(reason: string): void {
     const pending = this.#pending;
     this.#pending = [];
     for (const request of pending) {
       clearTimeout(request.timer);
-      request.reject(new HyperbaseWorkerError(`HyperBase ${reason}${tail}`));
+      request.reject(new HyperbaseWorkerError(`HyperBase ${reason}`));
     }
   }
 
   #drop(target: PendingRequest): void {
     this.#pending = this.#pending.filter((request) => request !== target);
     clearTimeout(target.timer);
-  }
-
-  #killChild(): void {
-    const child = this.#child;
-    this.#child = null;
-    this.#reader?.close();
-    this.#reader = null;
-    child?.kill("SIGKILL");
   }
 }
 

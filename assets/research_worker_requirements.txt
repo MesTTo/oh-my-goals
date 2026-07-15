@@ -1,0 +1,2 @@
+requests>=2.32,<3
+scipdf_parser>=0.52,<0.53

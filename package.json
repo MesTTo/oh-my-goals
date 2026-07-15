@@ -35,6 +35,7 @@
     "assets/gc_directive.pl",
     "assets/gc_score.pl",
     "assets/hb_worker.py",
+    "assets/research_worker.py",
     "skills/oh-my-goals",
     "ARCHITECTURE.md",
     "LICENSE"

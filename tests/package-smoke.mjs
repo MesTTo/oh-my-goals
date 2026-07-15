@@ -116,6 +116,7 @@ try {
   const packResult = JSON.parse(packed.stdout)[0];
   const files = new Map(packResult.files.map((file) => [file.path, file]));
   const moduleStems = [
+    "bibliography",
     "candidates",
     "cli",
     "core",
@@ -144,6 +145,8 @@ try {
     "query",
     "reasoner",
     "records",
+    "research",
+    "research_worker",
     "rounding",
     "score",
     "semantic",
@@ -151,6 +154,7 @@ try {
     "skill_installer",
     "snars",
     "solve",
+    "subprocess_worker",
     "transformers_embedding",
     "truth_value",
     "vector_index",
@@ -163,6 +167,7 @@ try {
     "assets/gc_directive.pl",
     "assets/gc_score.pl",
     "assets/hb_worker.py",
+    "assets/research_worker.py",
     "metta/oh-my-goals.metta",
     "skills/oh-my-goals/SKILL.md",
     "skills/oh-my-goals/references/input-schema.md",
@@ -194,6 +199,7 @@ try {
     "assets/gc_directive.pl",
     "assets/gc_score.pl",
     "assets/hb_worker.py",
+    "assets/research_worker.py",
     "metta/oh-my-goals.metta",
     "skills/oh-my-goals/SKILL.md",
     "skills/oh-my-goals/references/input-schema.md",

@@ -19,6 +19,7 @@ import {
   type PersistedSource,
   type PersistedWork,
 } from "./durable_store.js";
+import type { BibliographicFields } from "./bibliography.js";
 import {
   createGoalChainerMetta,
   mettaCall,
@@ -89,18 +90,9 @@ export interface StoredDerivation {
 
 /** A paper to ingest. Only a title and a scope are required; the external ids and
  * bibliographic fields are filled from whatever the research worker resolved. */
-export interface MemoryWorkInput {
+export interface MemoryWorkInput extends BibliographicFields {
   readonly title: string;
   readonly scope: MemoryScope;
-  readonly doi?: string;
-  readonly arxivId?: string;
-  readonly openAlexId?: string;
-  readonly semanticScholarId?: string;
-  readonly authors?: readonly string[];
-  readonly year?: number;
-  readonly venue?: string;
-  readonly abstract?: string;
-  readonly pdfUrl?: string;
   readonly status?: WorkStatus;
   readonly statusNotice?: string;
   readonly statusDate?: string;
