@@ -40,8 +40,9 @@ import {
 } from "./memory.js";
 import type { DurableStore } from "./durable_store.js";
 import { SqliteDurableStore } from "./durable_store.js";
+import { rankCandidates } from "./paper_search.js";
 import { queryMemory } from "./query.js";
-import type { ParsedPaper, ResearchWorker } from "./research.js";
+import type { CandidateSource, ParsedPaper, ResearchWorker, WorkCandidate } from "./research.js";
 import { createResearchWorker } from "./research_worker.js";
 import { SemanticBackend } from "./semantic.js";
 import { SemanticMemory } from "./semantic_memory.js";
@@ -209,6 +210,43 @@ function serializeWork(work: StoredWork): Record<string, unknown> {
     statusNotice: work.statusNotice ?? null,
     statusDate: work.statusDate ?? null,
     revision: work.revision,
+  };
+}
+
+/** A DOI/arXiv index of a scope's works, so a search hit already in the library
+ * is flagged with its work id instead of being offered again for ingestion. */
+function libraryIndex(memory: SemanticMemory, scope: MemoryScope): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const work of memory.worksInScope(scope)) {
+    if (work.doi !== undefined) index.set(`doi:${work.doi.toLowerCase()}`, work.id);
+    if (work.arxivId !== undefined) index.set(`arxiv:${work.arxivId.toLowerCase()}`, work.id);
+  }
+  return index;
+}
+
+function serializeCandidate(
+  candidate: WorkCandidate,
+  library: Map<string, string> | undefined,
+): Record<string, unknown> {
+  const meta = candidate.metadata;
+  const inLibrary =
+    library === undefined
+      ? undefined
+      : (meta.doi !== undefined ? library.get(`doi:${meta.doi.toLowerCase()}`) : undefined) ??
+        (meta.arxivId !== undefined ? library.get(`arxiv:${meta.arxivId.toLowerCase()}`) : undefined);
+  return {
+    title: meta.title,
+    doi: meta.doi ?? null,
+    arxivId: meta.arxivId ?? null,
+    openAlexId: meta.openAlexId ?? null,
+    semanticScholarId: meta.semanticScholarId ?? null,
+    authors: meta.authors ?? [],
+    year: meta.year ?? null,
+    venue: meta.venue ?? null,
+    citationCount: candidate.citationCount ?? null,
+    sources: candidate.sources,
+    score: candidate.score,
+    inLibrary: inLibrary ?? null,
   };
 }
 
@@ -568,6 +606,41 @@ export function createMemoryMcpServer(runtime: MemoryRuntime): McpServer {
         const explanation = explainProposition(memory, id);
         if (explanation === null) return fail(`not_found: no proposition ${id}`);
         return ok(`Explanation of ${id}.`, explanation);
+      } catch (error) {
+        return fail(errorText(error));
+      }
+    },
+  );
+
+  server.registerTool(
+    "find_papers",
+    {
+      title: "Find papers",
+      description:
+        "Search Semantic Scholar and OpenAlex for candidate works by query, ranked across sources by reciprocal rank fusion. Pass a scope to flag results already in your library. Returns candidates you can then ingest with ingest_paper.",
+      inputSchema: {
+        query: z.string().min(1).describe("a search query"),
+        limit: z.number().int().min(1).max(50).optional().describe("results to return, default 10"),
+        scope: scopeEnum.optional().describe("flag candidates already ingested in this scope"),
+        sources: z
+          .array(z.enum(["semanticScholar", "openAlex"]))
+          .optional()
+          .describe("sources to query, default both"),
+      },
+    },
+    async ({ query, limit, scope, sources }) => {
+      try {
+        const raw = await runtime.researchWorker.search(query, {
+          ...(limit !== undefined ? { limit } : {}),
+          ...(sources !== undefined ? { sources: sources as CandidateSource[] } : {}),
+        });
+        const ranked = rankCandidates(raw, limit ?? 10);
+        const library = scope !== undefined ? libraryIndex(memory, scope as MemoryScope) : undefined;
+        return ok(`Found ${ranked.length} candidate(s) for ${JSON.stringify(query)}.`, {
+          query,
+          count: ranked.length,
+          candidates: ranked.map((candidate) => serializeCandidate(candidate, library)),
+        });
       } catch (error) {
         return fail(errorText(error));
       }

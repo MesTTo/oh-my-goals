@@ -18,7 +18,7 @@ import type {
 import { typedMettaOf } from "../src/candidates.js";
 import type { ClaimExtractor, ExtractionResult } from "../src/extractor.js";
 import { createMemoryMcpServer, createMemoryRuntime, type MemoryRuntime } from "../src/mcp.js";
-import type { ParsedPaper, ResearchWorker, RetractionRecord } from "../src/research.js";
+import type { ParsedPaper, RawCandidate, ResearchWorker, RetractionRecord, SearchOptions } from "../src/research.js";
 
 // Minimal SH-tree builders and a canned parser, so the server can be exercised in
 // CI without the Python parser.
@@ -128,6 +128,19 @@ class StubResearchWorker implements ResearchWorker {
       this.retracted.has(doi) ? { doi, status: "retracted" as const, notice: `${doi}-notice` } : { doi, status: "active" as const },
     );
   }
+  // The Attention paper is returned by both sources (so ranking must fuse and
+  // dedup it), the contested result by one source only.
+  async search(_query: string, _options?: SearchOptions): Promise<readonly RawCandidate[]> {
+    return [
+      { metadata: { title: "Attention Is All You Need", arxivId: "1706.03762" }, source: "semanticScholar", citationCount: 100000 },
+      {
+        metadata: { title: "Attention Is All You Need", doi: "10.1/attn", arxivId: "1706.03762", openAlexId: "W1" },
+        source: "openAlex",
+        citationCount: 99000,
+      },
+      { metadata: { title: "A Contested Result", doi: "10.1/bad" }, source: "openAlex", citationCount: 5 },
+    ];
+  }
   async close(): Promise<void> {}
 }
 
@@ -209,12 +222,13 @@ afterEach(async () => {
 });
 
 describe("MCP surface discovery", () => {
-  it("exposes the nine tools, two prompts, and three resources", async () => {
+  it("exposes the ten tools, two prompts, and three resources", async () => {
     const tools = (await harness.client.listTools()).tools.map((t) => t.name).sort();
     expect(tools).toEqual([
       "add_claim",
       "check_retractions",
       "explain",
+      "find_papers",
       "forget",
       "ingest_paper",
       "query",
@@ -484,5 +498,36 @@ describe("MCP paper ingestion and retraction", () => {
     await client.close();
     await server.close();
     await runtime.close();
+  });
+});
+
+describe("MCP paper search", () => {
+  it("ranks and de-duplicates candidates across sources", async () => {
+    const { data, isError } = await call(harness.client, "find_papers", { query: "attention" });
+    expect(isError).toBe(false);
+    // Three raw hits collapse to two works; the one both sources returned ranks first.
+    expect(data.count).toBe(2);
+    expect(data.candidates[0].title).toBe("Attention Is All You Need");
+    expect(data.candidates[0].sources.sort()).toEqual(["openAlex", "semanticScholar"]);
+    expect(data.candidates[0].score).toBeGreaterThan(data.candidates[1].score);
+    // The merge fills the arXiv id and the DOI from the two records of that work.
+    expect(data.candidates[0].arxivId).toBe("1706.03762");
+    expect(data.candidates[0].doi).toBe("10.1/attn");
+  });
+
+  it("flags a candidate already in the library for a scope", async () => {
+    const ingest = await call(harness.client, "ingest_paper", { id: "10.1/bad", scope: "project" });
+    const workId = ingest.data.work.id;
+    const { data } = await call(harness.client, "find_papers", { query: "contested", scope: "project" });
+    const contested = data.candidates.find((c: any) => c.doi === "10.1/bad");
+    expect(contested.inLibrary).toBe(workId);
+    // A work not in the library is not flagged.
+    const attention = data.candidates.find((c: any) => c.arxivId === "1706.03762");
+    expect(attention.inLibrary).toBeNull();
+  });
+
+  it("passes the source filter through to the worker", async () => {
+    const { data } = await call(harness.client, "find_papers", { query: "x", sources: ["openAlex"] });
+    expect(data.count).toBeGreaterThan(0);
   });
 });

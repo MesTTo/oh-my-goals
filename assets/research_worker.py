@@ -30,8 +30,14 @@ REAL_STDOUT = sys.stdout
 
 CROSSREF_BASE_URL = "https://api.crossref.org"
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
+SEMANTIC_SCHOLAR_SEARCH_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
+SEMANTIC_SCHOLAR_FIELDS = "title,abstract,year,authors,externalIds,openAccessPdf,venue,citationCount"
+OPENALEX_WORKS_URL = "https://api.openalex.org/works"
 DEFAULT_TIMEOUT_SECONDS = 30
 PDF_TIMEOUT_SECONDS = 60
+DEFAULT_SEARCH_LIMIT = 10
+MAX_SEARCH_LIMIT = 50
+SEARCH_SOURCES = ("semanticScholar", "openAlex")
 
 DOI_RE = re.compile(
     r"^(?:doi:\s*|https?://(?:dx\.)?doi\.org/)?(10\.\d{4,9}/\S+)$",
@@ -480,6 +486,170 @@ def retraction_status(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [retraction_record(session, doi) for doi in dois]
 
 
+def openalex_id(value: Any) -> str | None:
+    if not isinstance(value, str) or value.strip() == "":
+        return None
+    return value.rstrip("/").rsplit("/", 1)[-1] or None
+
+
+def openalex_abstract(inverted: Any) -> str | None:
+    """Reconstruct plain text from OpenAlex's {word: [positions]} inverted index."""
+    if not isinstance(inverted, dict):
+        return None
+    positioned: list[tuple[int, str]] = []
+    for word, indices in inverted.items():
+        if not isinstance(word, str) or not isinstance(indices, list):
+            continue
+        for index in indices:
+            if isinstance(index, int):
+                positioned.append((index, word))
+    if not positioned:
+        return None
+    positioned.sort(key=lambda pair: pair[0])
+    return clean_text(" ".join(word for _, word in positioned))
+
+
+def put_optional(target: dict[str, Any], key: str, value: Any) -> None:
+    if value is not None:
+        target[key] = value
+
+
+def metadata_from_semantic_scholar(paper: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(paper, dict):
+        return None
+    title = clean_text(paper.get("title"))
+    if title is None:
+        return None
+    external = paper.get("externalIds") if isinstance(paper.get("externalIds"), dict) else {}
+    metadata: dict[str, Any] = {"title": title}
+    doi = external.get("DOI")
+    put_optional(metadata, "doi", normalize_doi(doi) if isinstance(doi, str) else None)
+    arxiv = external.get("ArXiv")
+    put_optional(metadata, "arxivId", normalize_arxiv_id(arxiv) if isinstance(arxiv, str) else None)
+    put_optional(metadata, "semanticScholarId", clean_text(paper.get("paperId")))
+    authors = [
+        clean_text(author.get("name"))
+        for author in paper.get("authors", [])
+        if isinstance(author, dict) and clean_text(author.get("name")) is not None
+    ]
+    if authors:
+        metadata["authors"] = authors
+    year = paper.get("year")
+    put_optional(metadata, "year", year if isinstance(year, int) else None)
+    put_optional(metadata, "venue", clean_text(paper.get("venue")))
+    put_optional(metadata, "abstract", clean_text(paper.get("abstract")))
+    open_pdf = paper.get("openAccessPdf")
+    if isinstance(open_pdf, dict):
+        put_optional(metadata, "pdfUrl", clean_text(open_pdf.get("url")))
+    return metadata
+
+
+def metadata_from_openalex(work: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(work, dict):
+        return None
+    title = clean_text(work.get("title") or work.get("display_name"))
+    if title is None:
+        return None
+    ids = work.get("ids") if isinstance(work.get("ids"), dict) else {}
+    metadata: dict[str, Any] = {"title": title}
+    doi = work.get("doi") or ids.get("doi")
+    put_optional(metadata, "doi", normalize_doi(doi) if isinstance(doi, str) else None)
+    put_optional(metadata, "openAlexId", openalex_id(ids.get("openalex") or work.get("id")))
+    authors = [
+        clean_text(entry.get("author", {}).get("display_name"))
+        for entry in work.get("authorships", [])
+        if isinstance(entry, dict)
+        and isinstance(entry.get("author"), dict)
+        and clean_text(entry["author"].get("display_name")) is not None
+    ]
+    if authors:
+        metadata["authors"] = authors
+    year = work.get("publication_year")
+    put_optional(metadata, "year", year if isinstance(year, int) else None)
+    location = work.get("primary_location") if isinstance(work.get("primary_location"), dict) else {}
+    source = location.get("source") if isinstance(location.get("source"), dict) else {}
+    put_optional(metadata, "venue", clean_text(source.get("display_name")))
+    put_optional(metadata, "abstract", openalex_abstract(work.get("abstract_inverted_index")))
+    best = work.get("best_oa_location") if isinstance(work.get("best_oa_location"), dict) else {}
+    put_optional(metadata, "pdfUrl", clean_text(location.get("pdf_url") or best.get("pdf_url")))
+    return metadata
+
+
+def as_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def search_semantic_scholar(session: requests.Session, query: str, limit: int) -> list[dict[str, Any]]:
+    headers = {}
+    api_key = os.environ.get("OH_MY_GOALS_S2_API_KEY", "").strip()
+    if api_key != "":
+        headers["x-api-key"] = api_key
+    try:
+        response = session.get(
+            SEMANTIC_SCHOLAR_SEARCH_URL,
+            params={"query": query, "limit": limit, "fields": SEMANTIC_SCHOLAR_FIELDS},
+            headers=headers,
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        data = response.json().get("data", [])
+    except (requests.RequestException, ValueError) as error:
+        print(f"Semantic Scholar search unavailable: {type(error).__name__}: {error}", file=sys.stderr)
+        return []
+    candidates = []
+    for paper in data if isinstance(data, list) else []:
+        metadata = metadata_from_semantic_scholar(paper)
+        if metadata is None:
+            continue
+        candidate: dict[str, Any] = {"metadata": metadata, "source": "semanticScholar"}
+        put_optional(candidate, "citationCount", as_int(paper.get("citationCount")))
+        candidates.append(candidate)
+    return candidates
+
+
+def search_openalex(session: requests.Session, query: str, limit: int) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {"search": query, "per-page": limit, "per_page": limit}
+    email = os.environ.get("OH_MY_GOALS_OPENALEX_EMAIL", "").strip() or os.environ.get(
+        "OH_MY_GOALS_CROSSREF_EMAIL", ""
+    ).strip()
+    if email != "":
+        params["mailto"] = email
+    try:
+        response = session.get(OPENALEX_WORKS_URL, params=params, timeout=DEFAULT_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        results = response.json().get("results", [])
+    except (requests.RequestException, ValueError) as error:
+        print(f"OpenAlex search unavailable: {type(error).__name__}: {error}", file=sys.stderr)
+        return []
+    candidates = []
+    for work in results if isinstance(results, list) else []:
+        metadata = metadata_from_openalex(work)
+        if metadata is None:
+            continue
+        candidate: dict[str, Any] = {"metadata": metadata, "source": "openAlex"}
+        put_optional(candidate, "citationCount", as_int(work.get("cited_by_count")))
+        candidates.append(candidate)
+    return candidates
+
+
+def search(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    query = payload.get("query")
+    if not isinstance(query, str) or query.strip() == "":
+        raise WorkerError("search requires a nonblank query")
+    raw_limit = payload.get("limit", DEFAULT_SEARCH_LIMIT)
+    limit = raw_limit if isinstance(raw_limit, int) and raw_limit > 0 else DEFAULT_SEARCH_LIMIT
+    limit = min(limit, MAX_SEARCH_LIMIT)
+    requested = payload.get("sources")
+    sources = requested if isinstance(requested, list) and requested else list(SEARCH_SOURCES)
+    session = http_session()
+    candidates: list[dict[str, Any]] = []
+    if "semanticScholar" in sources:
+        candidates.extend(search_semantic_scholar(session, query, limit))
+    if "openAlex" in sources:
+        candidates.extend(search_openalex(session, query, limit))
+    return candidates
+
+
 def handle(payload: dict[str, Any]) -> dict[str, Any]:
     command = payload.get("command")
     request_id = payload.get("id")
@@ -487,6 +657,8 @@ def handle(payload: dict[str, Any]) -> dict[str, Any]:
         return {"id": request_id, "ok": True, "result": fetch_and_parse(payload)}
     if command == "retraction_status":
         return {"id": request_id, "ok": True, "result": retraction_status(payload)}
+    if command == "search":
+        return {"id": request_id, "ok": True, "result": search(payload)}
     return {"id": request_id, "ok": False, "error": f"ValueError: unknown command {command!r}"}
 
 

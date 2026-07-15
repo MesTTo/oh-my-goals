@@ -140,6 +140,7 @@ try {
     "metta_bulk",
     "motivation",
     "native_score",
+    "paper_search",
     "pln",
     "prolog",
     "prolog_runtime",

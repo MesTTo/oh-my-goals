@@ -4,9 +4,11 @@ import {
   type ParsedPaper,
   type ParsedReference,
   type ParsedSection,
+  type RawCandidate,
   type ResearchWorker,
   ResearchWorkerError,
   type RetractionRecord,
+  type SearchOptions,
   type WorkMetadata,
 } from "./research.js";
 import { assertDenseArray, assertPlainRecord } from "./records.js";
@@ -196,6 +198,20 @@ function normalizeRetractionRecord(value: unknown): RetractionRecord {
   };
 }
 
+function normalizeRawCandidate(value: unknown): RawCandidate {
+  assertPlainRecord(value, "worker candidate");
+  const source = requireString(value, "source");
+  if (source !== "semanticScholar" && source !== "openAlex") {
+    throw new ResearchWorkerError(`worker returned an unknown search source: ${source}`);
+  }
+  const citationCount = optionalNumber(value, "citationCount");
+  return {
+    metadata: normalizeMetadata(value.metadata),
+    source,
+    ...(citationCount !== undefined ? { citationCount } : {}),
+  };
+}
+
 function workerFailure(response: Record<string, unknown>): string {
   const error = typeof response.error === "string" ? response.error : "unknown worker failure";
   return `research worker failed: ${error}`;
@@ -246,6 +262,21 @@ export class PythonResearchWorker implements ResearchWorker {
     }
     assertDenseArray(response.result, "worker retraction result");
     return response.result.map((record) => normalizeRetractionRecord(record));
+  }
+
+  async search(query: string, options: SearchOptions = {}): Promise<readonly RawCandidate[]> {
+    if (typeof query !== "string" || query.trim() === "") {
+      throw new TypeError("search query must be a nonblank string");
+    }
+    const payload: Record<string, unknown> = { command: "search", query };
+    if (options.limit !== undefined) payload.limit = options.limit;
+    if (options.sources !== undefined) payload.sources = [...options.sources];
+    const response = await this.#request(payload);
+    if (response.ok !== true) {
+      throw new ResearchWorkerError(workerFailure(response));
+    }
+    assertDenseArray(response.result, "worker search result");
+    return response.result.map((candidate) => normalizeRawCandidate(candidate));
   }
 
   async close(): Promise<void> {

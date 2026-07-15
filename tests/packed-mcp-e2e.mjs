@@ -113,6 +113,7 @@ async function main() {
       "add_claim",
       "check_retractions",
       "explain",
+      "find_papers",
       "forget",
       "ingest_paper",
       "query",

@@ -44,13 +44,43 @@ export interface RetractionRecord {
   readonly date?: string;
 }
 
-/** The acquisition interface the MCP tools depend on. Later slices extend it with
- * search and citation traversal; this is the ingest-and-retract spine. */
+/** A search backend the worker queries. Semantic Scholar is keyless but rate
+ * limited without a key; OpenAlex is keyless. Search degrades to whichever
+ * source answers, so a rate-limited or down source never fails the query. */
+export type CandidateSource = "semanticScholar" | "openAlex";
+
+/** One search hit from one source, in that source's own relevance order. */
+export interface RawCandidate {
+  readonly metadata: WorkMetadata;
+  readonly source: CandidateSource;
+  readonly citationCount?: number;
+}
+
+/** A ranked candidate work: its merged metadata, the sources that returned it,
+ * and the fused relevance score used to order results. */
+export interface WorkCandidate {
+  readonly metadata: WorkMetadata;
+  readonly sources: readonly CandidateSource[];
+  readonly citationCount?: number;
+  readonly score: number;
+}
+
+export interface SearchOptions {
+  /** Results requested per source. Default 10, capped at 50 by the worker. */
+  readonly limit?: number;
+  /** Restrict the sources queried. Default both. */
+  readonly sources?: readonly CandidateSource[];
+}
+
+/** The acquisition interface the MCP tools depend on. Slice 4 extends it with
+ * citation traversal; this is the ingest, retract, and search surface. */
 export interface ResearchWorker {
   /** Fetch and parse a paper by DOI or arXiv id. */
   fetchAndParse(id: string): Promise<ParsedPaper>;
   /** The editorial status of each DOI, from Crossref. */
   retractionStatus(dois: readonly string[]): Promise<readonly RetractionRecord[]>;
+  /** Candidate works for a query, each in its source's relevance order. */
+  search(query: string, options?: SearchOptions): Promise<readonly RawCandidate[]>;
   /** Release the subprocess. */
   close(): Promise<void>;
 }

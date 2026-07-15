@@ -63,4 +63,22 @@ describe.skipIf(!liveWorkerConfigured)("live research worker", () => {
       await worker.close();
     }
   });
+
+  it("searches for candidate works and surfaces a known paper", async () => {
+    const worker = createResearchWorker();
+    try {
+      // OpenAlex is keyless and reliable; Semantic Scholar may rate-limit keyless
+      // and be skipped, so the query must still succeed from OpenAlex alone.
+      const candidates = await worker.search("attention is all you need transformer", { limit: 5 });
+      expect(candidates.length).toBeGreaterThan(0);
+      const titles = candidates.map((candidate) => candidate.metadata.title.toLowerCase());
+      expect(titles.some((title) => title.includes("attention is all you need"))).toBe(true);
+      for (const candidate of candidates) {
+        expect(["semanticScholar", "openAlex"]).toContain(candidate.source);
+        expect(typeof candidate.metadata.title).toBe("string");
+      }
+    } finally {
+      await worker.close();
+    }
+  });
 });
