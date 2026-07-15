@@ -81,6 +81,13 @@ export interface ResearchWorker {
   retractionStatus(dois: readonly string[]): Promise<readonly RetractionRecord[]>;
   /** Candidate works for a query, each in its source's relevance order. */
   search(query: string, options?: SearchOptions): Promise<readonly RawCandidate[]>;
+  /** External citation edges of a work by DOI or arXiv id: the works it cites
+   * (references) or the works that cite it (citedBy), from OpenAlex. */
+  citations(
+    id: string,
+    direction: "references" | "citedBy",
+    options?: { readonly limit?: number },
+  ): Promise<readonly RawCandidate[]>;
   /** Release the subprocess. */
   close(): Promise<void>;
 }

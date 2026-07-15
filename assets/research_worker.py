@@ -632,6 +632,101 @@ def search_openalex(session: requests.Session, query: str, limit: int) -> list[d
     return candidates
 
 
+def openalex_resolve(session: requests.Session, ref: str) -> dict[str, Any] | None:
+    """The OpenAlex work for a DOI or arXiv id, or None when it is not found.
+
+    OpenAlex keys works by DOI. An arXiv id is tried as its arXiv DOI (assigned
+    only since 2022) and, failing that, as the paper's published DOI resolved from
+    the arXiv record, so a published preprint still links up. An old arXiv-only
+    paper that OpenAlex holds under neither DOI does not resolve here; its backward
+    citations still come from the GROBID reference parse."""
+    doi = normalize_doi(ref)
+    dois: list[str] = []
+    if doi is not None:
+        dois.append(doi)
+    else:
+        arxiv = normalize_arxiv_id(ref)
+        dois.append(f"10.48550/arxiv.{arxiv}")
+        try:
+            published = metadata_from_arxiv(session, ref).get("doi")
+            if isinstance(published, str):
+                dois.append(normalize_doi(published) or published)
+        except (requests.RequestException, ValueError, WorkerError):
+            pass
+    params: dict[str, Any] = {}
+    email = os.environ.get("OH_MY_GOALS_OPENALEX_EMAIL", "").strip() or os.environ.get(
+        "OH_MY_GOALS_CROSSREF_EMAIL", ""
+    ).strip()
+    if email != "":
+        params["mailto"] = email
+    for candidate in dois:
+        try:
+            response = session.get(
+                f"{OPENALEX_WORKS_URL}/doi:{candidate}", params=params, timeout=DEFAULT_TIMEOUT_SECONDS
+            )
+            if response.status_code == 200:
+                work = response.json()
+                if isinstance(work, dict):
+                    return work
+        except (requests.RequestException, ValueError):
+            continue
+    return None
+
+
+def openalex_batch(session: requests.Session, filter_value: str, limit: int, sort: str | None) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {"filter": filter_value, "per-page": limit, "per_page": limit}
+    if sort is not None:
+        params["sort"] = sort
+    email = os.environ.get("OH_MY_GOALS_OPENALEX_EMAIL", "").strip() or os.environ.get(
+        "OH_MY_GOALS_CROSSREF_EMAIL", ""
+    ).strip()
+    if email != "":
+        params["mailto"] = email
+    try:
+        response = session.get(OPENALEX_WORKS_URL, params=params, timeout=DEFAULT_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        results = response.json().get("results", [])
+    except (requests.RequestException, ValueError) as error:
+        print(f"OpenAlex citation query unavailable: {type(error).__name__}: {error}", file=sys.stderr)
+        return []
+    candidates = []
+    for work in results if isinstance(results, list) else []:
+        metadata = metadata_from_openalex(work)
+        if metadata is None:
+            continue
+        candidate: dict[str, Any] = {"metadata": metadata, "source": "openAlex"}
+        put_optional(candidate, "citationCount", as_int(work.get("cited_by_count")))
+        candidates.append(candidate)
+    return candidates
+
+
+def citations(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    ref = payload.get("ref")
+    if not isinstance(ref, str) or ref.strip() == "":
+        raise WorkerError("citations requires a nonblank ref")
+    direction = payload.get("direction", "references")
+    if direction not in ("references", "citedBy"):
+        raise WorkerError("citations direction must be references or citedBy")
+    raw_limit = payload.get("limit", DEFAULT_SEARCH_LIMIT)
+    limit = raw_limit if isinstance(raw_limit, int) and raw_limit > 0 else DEFAULT_SEARCH_LIMIT
+    limit = min(limit, MAX_SEARCH_LIMIT)
+    session = http_session()
+    work = openalex_resolve(session, ref)
+    if work is None:
+        return []
+    if direction == "references":
+        referenced = work.get("referenced_works")
+        ids = [openalex_id(entry) for entry in referenced] if isinstance(referenced, list) else []
+        ids = [value for value in ids if value is not None][:limit]
+        if not ids:
+            return []
+        return openalex_batch(session, f"openalex_id:{'|'.join(ids)}", limit, None)
+    oaid = openalex_id(work.get("id"))
+    if oaid is None:
+        return []
+    return openalex_batch(session, f"cites:{oaid}", limit, "cited_by_count:desc")
+
+
 def search(payload: dict[str, Any]) -> list[dict[str, Any]]:
     query = payload.get("query")
     if not isinstance(query, str) or query.strip() == "":
@@ -659,6 +754,8 @@ def handle(payload: dict[str, Any]) -> dict[str, Any]:
         return {"id": request_id, "ok": True, "result": retraction_status(payload)}
     if command == "search":
         return {"id": request_id, "ok": True, "result": search(payload)}
+    if command == "citations":
+        return {"id": request_id, "ok": True, "result": citations(payload)}
     return {"id": request_id, "ok": False, "error": f"ValueError: unknown command {command!r}"}
 
 

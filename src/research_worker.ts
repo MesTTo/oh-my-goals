@@ -279,6 +279,29 @@ export class PythonResearchWorker implements ResearchWorker {
     return response.result.map((candidate) => normalizeRawCandidate(candidate));
   }
 
+  async citations(
+    id: string,
+    direction: "references" | "citedBy",
+    options: { readonly limit?: number } = {},
+  ): Promise<readonly RawCandidate[]> {
+    if (typeof id !== "string" || id.trim() === "") {
+      throw new TypeError("citations id must be a nonblank string");
+    }
+    if (direction !== "references" && direction !== "citedBy") {
+      throw new TypeError('citations direction must be "references" or "citedBy"');
+    }
+    // "ref" not "id": the protocol frames every request with an "id", so the paper
+    // reference travels under a different key, the way fetch_and_parse does.
+    const payload: Record<string, unknown> = { command: "citations", ref: id, direction };
+    if (options.limit !== undefined) payload.limit = options.limit;
+    const response = await this.#request(payload);
+    if (response.ok !== true) {
+      throw new ResearchWorkerError(workerFailure(response));
+    }
+    assertDenseArray(response.result, "worker citations result");
+    return response.result.map((candidate) => normalizeRawCandidate(candidate));
+  }
+
   async close(): Promise<void> {
     const closing = this.#transport.close();
     const pending = this.#pending;

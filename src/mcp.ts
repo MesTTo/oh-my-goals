@@ -780,7 +780,7 @@ export function createMemoryMcpServer(runtime: MemoryRuntime): McpServer {
     {
       title: "Citations",
       description:
-        "Walk the citation graph of an ingested work: the works it cites (references) or the works that cite it (citedBy), one hop or transitively. Traversal is symbolic over the stored graph. For references it also lists any cited works not yet in the library.",
+        "Walk the citation graph of an ingested work: the works it cites (references) or the works that cite it (citedBy), one hop or transitively. Traversal is symbolic over the stored graph. For references it also lists any cited works not yet in the library. Set external to fetch the wider citation edges from OpenAlex as candidates you can ingest.",
       inputSchema: {
         workId: z.string().min(1).describe("the id of an ingested work"),
         direction: z
@@ -788,9 +788,10 @@ export function createMemoryMcpServer(runtime: MemoryRuntime): McpServer {
           .optional()
           .describe('"references" (what it cites, default) or "citedBy" (what cites it)'),
         transitive: z.boolean().optional().describe("follow the graph transitively, not just one hop"),
+        external: z.boolean().optional().describe("also fetch the wider edges from OpenAlex as candidates"),
       },
     },
-    async ({ workId, direction, transitive }) => {
+    async ({ workId, direction, transitive, external }) => {
       const work = memory.getWork(workId);
       if (work === undefined) return fail(`no such work: ${workId}`);
       const dir = (direction ?? "references") as CitationDirection;
@@ -809,6 +810,24 @@ export function createMemoryMcpServer(runtime: MemoryRuntime): McpServer {
           keyType: edge.citedKeyType,
           inLibrary: edge.citedWorkId ?? null,
         }));
+      }
+      // External enrichment: the wider graph from OpenAlex, ranked and flagged
+      // against the library, as candidates the caller can ingest.
+      if (external === true) {
+        const externalId = work.doi ?? work.arxivId;
+        if (externalId === undefined) {
+          result.external = { note: "the work has no DOI or arXiv id to look up externally", candidates: [] };
+        } else {
+          try {
+            const raw = await runtime.researchWorker.citations(externalId, dir, { limit: 25 });
+            const library = libraryIndex(memory, work.scope);
+            result.external = {
+              candidates: rankCandidates(raw, 25).map((candidate) => serializeCandidate(candidate, library)),
+            };
+          } catch (error) {
+            result.external = { note: errorText(error), candidates: [] };
+          }
+        }
       }
       return ok(`${works.length} ${dir} work(s) for ${workId}.`, result);
     },

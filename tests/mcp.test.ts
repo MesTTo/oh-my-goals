@@ -152,6 +152,12 @@ class StubResearchWorker implements ResearchWorker {
       { metadata: { title: "A Contested Result", doi: "10.1/bad" }, source: "openAlex", citationCount: 5 },
     ];
   }
+  async citations(_id: string, direction: "references" | "citedBy"): Promise<readonly RawCandidate[]> {
+    // A canned external edge so the external option is exercised offline.
+    return direction === "references"
+      ? [{ metadata: { title: "An External Reference", doi: "10.9/extref" }, source: "openAlex", citationCount: 12 }]
+      : [{ metadata: { title: "An External Citing Work", doi: "10.9/extcite" }, source: "openAlex", citationCount: 3 }];
+  }
   async close(): Promise<void> {}
 }
 
@@ -575,5 +581,15 @@ describe("MCP citation graph", () => {
   it("errors for an unknown work", async () => {
     const { isError } = await call(harness.client, "citations", { workId: "work-999", direction: "references" });
     expect(isError).toBe(true);
+  });
+
+  it("enriches with external candidates from the worker when asked", async () => {
+    const ingest = await call(harness.client, "ingest_paper", { id: "10.1/bad", scope: "project" });
+    const workId = ingest.data.work.id;
+    const refs = await call(harness.client, "citations", { workId, direction: "references", external: true });
+    expect(refs.data.external.candidates).toHaveLength(1);
+    expect(refs.data.external.candidates[0].doi).toBe("10.9/extref");
+    const citedBy = await call(harness.client, "citations", { workId, direction: "citedBy", external: true });
+    expect(citedBy.data.external.candidates[0].doi).toBe("10.9/extcite");
   });
 });

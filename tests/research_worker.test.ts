@@ -81,4 +81,21 @@ describe.skipIf(!liveWorkerConfigured)("live research worker", () => {
       await worker.close();
     }
   });
+
+  it("fetches external citation edges for a DOI paper both ways", async () => {
+    const worker = createResearchWorker();
+    try {
+      // A published DOI resolves in OpenAlex, which holds its references and citers.
+      const references = await worker.citations("10.1016/j.micpro.2020.103768", "references", { limit: 3 });
+      expect(references.length).toBeGreaterThan(0);
+      for (const candidate of references) {
+        expect(candidate.source).toBe("openAlex");
+        expect(typeof candidate.metadata.title).toBe("string");
+      }
+      const citedBy = await worker.citations("10.1016/j.micpro.2020.103768", "citedBy", { limit: 3 });
+      expect(citedBy.length).toBeGreaterThan(0);
+    } finally {
+      await worker.close();
+    }
+  });
 });
