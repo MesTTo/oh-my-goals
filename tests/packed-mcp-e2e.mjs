@@ -109,7 +109,17 @@ async function main() {
 
     // Tool discovery: the packed server exposes the whole surface.
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-    assert.deepEqual(tools, ["explain", "forget", "query", "remember", "revise", "solve"]);
+    assert.deepEqual(tools, [
+      "add_claim",
+      "check_retractions",
+      "explain",
+      "forget",
+      "ingest_paper",
+      "query",
+      "remember",
+      "revise",
+      "solve",
+    ]);
 
     // Store the goal and two candidate actions through the real parser.
     const goal = structured(

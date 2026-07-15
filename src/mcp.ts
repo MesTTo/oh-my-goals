@@ -27,10 +27,14 @@ import {
   type MemoryKind,
   type MemoryScope,
   type StoredProposition,
+  type StoredWork,
+  type WorkStatus,
 } from "./memory.js";
 import type { DurableStore } from "./durable_store.js";
 import { SqliteDurableStore } from "./durable_store.js";
 import { queryMemory } from "./query.js";
+import type { ResearchWorker } from "./research.js";
+import { createResearchWorker } from "./research_worker.js";
 import { SemanticBackend } from "./semantic.js";
 import { SemanticMemory } from "./semantic_memory.js";
 import { solveFromMemory, type SolveReceipt } from "./solve.js";
@@ -54,6 +58,9 @@ const sourceSchema = z.object({
 export interface MemoryRuntime {
   readonly memory: SemanticMemory;
   readonly parser: HyperbaseParser;
+  /** The acquisition backend. Like the parser, it is always present and defers a
+   * "not configured" error to the first call that needs it. */
+  readonly researchWorker: ResearchWorker;
   readonly repository: string | undefined;
   readonly session: string | undefined;
   close(): Promise<void>;
@@ -67,6 +74,10 @@ export interface MemoryRuntimeOptions {
   readonly storePath?: string;
   /** Parser. Defaults to the env-configured AlphaBeta parser; inject a stub for tests. */
   readonly parser?: HyperbaseParser;
+  /** Research worker for paper acquisition. Defaults to the env-configured
+   * subprocess worker, which defers a "not configured" error to call time; inject
+   * a stub for tests. */
+  readonly researchWorker?: ResearchWorker;
   /** Embedding provider. Defaults to the token-hash provider, or BGE via env. */
   readonly embedding?: EmbeddingProvider;
   readonly now?: () => string;
@@ -88,14 +99,17 @@ export async function createMemoryRuntime(options: MemoryRuntimeOptions = {}): P
     backend,
   });
   const parser = options.parser ?? createHyperbaseParser();
+  const researchWorker = options.researchWorker ?? createResearchWorker();
   return {
     memory,
     parser,
+    researchWorker,
     repository: options.repository,
     session: options.session,
     async close() {
       memory.close();
       await parser.close();
+      await researchWorker?.close();
     },
   };
 }
@@ -161,6 +175,22 @@ function serializeSolve(receipt: SolveReceipt): Record<string, unknown> {
     evidence: receipt.evidence,
     diagnostics: receipt.diagnostics,
     provenance: receipt.provenance,
+  };
+}
+
+function serializeWork(work: StoredWork): Record<string, unknown> {
+  return {
+    id: work.id,
+    title: work.title,
+    doi: work.doi ?? null,
+    arxivId: work.arxivId ?? null,
+    authors: work.authors,
+    year: work.year ?? null,
+    venue: work.venue ?? null,
+    status: work.status,
+    statusNotice: work.statusNotice ?? null,
+    statusDate: work.statusDate ?? null,
+    revision: work.revision,
   };
 }
 
@@ -470,6 +500,125 @@ export function createMemoryMcpServer(runtime: MemoryRuntime): McpServer {
         const explanation = explainProposition(memory, id);
         if (explanation === null) return fail(`not_found: no proposition ${id}`);
         return ok(`Explanation of ${id}.`, explanation);
+      } catch (error) {
+        return fail(errorText(error));
+      }
+    },
+  );
+
+  server.registerTool(
+    "ingest_paper",
+    {
+      title: "Ingest paper",
+      description:
+        "Fetch a paper by DOI or arXiv id, parse it, and store it as a work with its retraction status. Returns the work and its parsed sections and references so you can add claims from them. A retracted paper is stored retracted, so any claim added from it is inactive.",
+      inputSchema: {
+        id: z.string().min(1).describe("a DOI or an arXiv id"),
+        scope: scopeEnum,
+      },
+    },
+    async ({ id, scope }) => {
+      try {
+        const parsed = await runtime.researchWorker.fetchAndParse(id);
+        const meta = parsed.metadata;
+        let status: WorkStatus = "active";
+        let notice: string | undefined;
+        let date: string | undefined;
+        if (meta.doi !== undefined) {
+          const [record] = await runtime.researchWorker.retractionStatus([meta.doi]);
+          if (record !== undefined) {
+            status = record.status;
+            notice = record.notice;
+            date = record.date;
+          }
+        }
+        const work = await memory.ingestWork({
+          title: meta.title,
+          scope: scope as MemoryScope,
+          doi: meta.doi,
+          arxivId: meta.arxivId,
+          openAlexId: meta.openAlexId,
+          semanticScholarId: meta.semanticScholarId,
+          authors: meta.authors,
+          year: meta.year,
+          venue: meta.venue,
+          abstract: meta.abstract,
+          pdfUrl: meta.pdfUrl,
+          status,
+          statusNotice: notice,
+          statusDate: date,
+        });
+        return ok(`Ingested ${work.id}${status === "active" ? "" : ` (${status})`}.`, {
+          work: serializeWork(work),
+          sections: parsed.sections,
+          references: parsed.references,
+        });
+      } catch (error) {
+        return fail(errorText(error));
+      }
+    },
+  );
+
+  server.registerTool(
+    "add_claim",
+    {
+      title: "Add claim",
+      description:
+        "Store one claim drawn from an ingested work. The statement is a single controlled-English sentence, workId is the work it comes from, and locator is the section and quote it rests on. The claim stays active only while the work is not retracted. A rejected statement returns rewrite feedback and stores nothing.",
+      inputSchema: {
+        statement: z.string().min(1).describe("one asserted proposition"),
+        workId: z.string().min(1).describe("the id of an ingested work"),
+        locator: z.string().min(1).describe("where in the work the claim is, e.g. a section and a quote"),
+        scope: scopeEnum,
+        kind: kindEnum.optional().describe('defaults to "observation"'),
+      },
+    },
+    async ({ statement, workId, locator, scope, kind }) => {
+      const work = memory.getWork(workId);
+      if (work === undefined) return fail(`no such work: ${workId}`);
+      try {
+        const [result] = await ingestStatements(parser, memory, [
+          {
+            content: statement,
+            scope: scope as MemoryScope,
+            kind: (kind ?? "observation") as MemoryKind,
+            sources: [{ type: "paper", reference: work.doi ?? work.arxivId ?? work.id, workId, locator }],
+          },
+        ]);
+        return ok(
+          result!.stored ? `Stored claim ${result!.proposition.id} from ${workId}.` : "The statement was not stored.",
+          serializeIngest(result!),
+        );
+      } catch (error) {
+        return fail(errorText(error));
+      }
+    },
+  );
+
+  server.registerTool(
+    "check_retractions",
+    {
+      title: "Check retractions",
+      description:
+        "Re-check every ingested work in a scope against Crossref and invalidate the claims of any newly retracted work. Reports the works whose status changed and the claims that were invalidated.",
+      inputSchema: { scope: scopeEnum },
+    },
+    async ({ scope }) => {
+      try {
+        const works = memory.worksInScope(scope as MemoryScope).filter((work) => work.doi !== undefined);
+        if (works.length === 0) return ok("No works with a DOI to check.", { changed: [] });
+        const records = await runtime.researchWorker.retractionStatus(works.map((work) => work.doi!));
+        const byDoi = new Map(records.map((record) => [record.doi, record]));
+        const changed: Record<string, unknown>[] = [];
+        for (const work of works) {
+          const record = byDoi.get(work.doi!);
+          if (record === undefined || record.status === work.status) continue;
+          const result = await memory.setWorkStatus(work.id, record.status, record.notice, record.date);
+          if (result.ok) {
+            changed.push({ workId: work.id, doi: work.doi, from: work.status, to: record.status, invalidated: result.invalidated });
+          }
+        }
+        return ok(`Checked ${works.length} work(s); ${changed.length} changed.`, { changed });
       } catch (error) {
         return fail(errorText(error));
       }

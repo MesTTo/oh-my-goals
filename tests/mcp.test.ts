@@ -17,6 +17,7 @@ import type {
 } from "../src/hyperbase.js";
 import { typedMettaOf } from "../src/candidates.js";
 import { createMemoryMcpServer, createMemoryRuntime, type MemoryRuntime } from "../src/mcp.js";
+import type { ParsedPaper, ResearchWorker, RetractionRecord } from "../src/research.js";
 
 // Minimal SH-tree builders and a canned parser, so the server can be exercised in
 // CI without the Python parser.
@@ -65,6 +66,7 @@ const REVISED_GOAL = "The user requires that the public API stays stable.";
 const REVIEW_A = "The reviewer approved a_upgrade.";
 const REVIEW_B = "The reviewer approved a_adapter.";
 const BAD = "Do this and that and everything at once.";
+const CLAIM = "The transformer improves translation.";
 
 class StubParser implements HyperbaseParser {
   readonly #items = new Map<string, HyperbaseParseItem>();
@@ -81,6 +83,7 @@ class StubParser implements HyperbaseParser {
     put(accepted(REVISED_GOAL, relation("requires", np1("the", "user"), np1("the", "api")), "declarative"));
     put(accepted(REVIEW_A, relation("approved", np1("the", "reviewer"), plus("action", "a_upgrade")), "declarative"));
     put(accepted(REVIEW_B, relation("approved", np1("the", "reviewer"), plus("action", "a_adapter")), "declarative"));
+    put(accepted(CLAIM, relation("improves", plus("model", "transformer"), np1("the", "translation")), "declarative"));
     put(rejected(BAD));
   }
   async parse(statements: readonly string[]): Promise<HyperbaseParseBatch> {
@@ -92,16 +95,49 @@ class StubParser implements HyperbaseParser {
   async close(): Promise<void> {}
 }
 
+// A canned research worker: a few papers and a mutable retracted set, so a test
+// can flip a work to retracted and drive check_retractions without the network.
+class StubResearchWorker implements ResearchWorker {
+  readonly papers = new Map<string, ParsedPaper>();
+  readonly retracted = new Set<string>();
+  constructor() {
+    this.papers.set("1706.03762", {
+      metadata: { title: "Attention Is All You Need", arxivId: "1706.03762", authors: ["Vaswani"], year: 2017, abstract: "The Transformer." },
+      sections: [{ heading: "Introduction", text: "We propose the Transformer." }],
+      references: [{ raw: "Bahdanau et al. 2015", doi: "10.1/prior" }],
+    });
+    this.papers.set("10.1/bad", {
+      metadata: { title: "A Contested Result", doi: "10.1/bad", authors: ["B. Author"], year: 2019 },
+      sections: [],
+      references: [],
+    });
+  }
+  async fetchAndParse(id: string): Promise<ParsedPaper> {
+    const paper = this.papers.get(id);
+    if (paper === undefined) throw new Error(`no such paper: ${id}`);
+    return paper;
+  }
+  async retractionStatus(dois: readonly string[]): Promise<readonly RetractionRecord[]> {
+    return dois.map((doi) =>
+      this.retracted.has(doi) ? { doi, status: "retracted" as const, notice: `${doi}-notice` } : { doi, status: "active" as const },
+    );
+  }
+  async close(): Promise<void> {}
+}
+
 interface Harness {
   readonly client: Client;
   readonly runtime: MemoryRuntime;
+  readonly worker: StubResearchWorker;
   close(): Promise<void>;
 }
 
 async function connect(): Promise<Harness> {
+  const worker = new StubResearchWorker();
   const runtime = await createMemoryRuntime({
     store: new InMemoryDurableStore(),
     parser: new StubParser(),
+    researchWorker: worker,
     embedding: new TokenEmbeddingProvider(256),
     repository: "demo",
   });
@@ -113,6 +149,7 @@ async function connect(): Promise<Harness> {
   return {
     client,
     runtime,
+    worker,
     async close() {
       await client.close();
       await server.close();
@@ -138,9 +175,19 @@ afterEach(async () => {
 });
 
 describe("MCP surface discovery", () => {
-  it("exposes the six tools, two prompts, and three resources", async () => {
+  it("exposes the nine tools, two prompts, and three resources", async () => {
     const tools = (await harness.client.listTools()).tools.map((t) => t.name).sort();
-    expect(tools).toEqual(["explain", "forget", "query", "remember", "revise", "solve"]);
+    expect(tools).toEqual([
+      "add_claim",
+      "check_retractions",
+      "explain",
+      "forget",
+      "ingest_paper",
+      "query",
+      "remember",
+      "revise",
+      "solve",
+    ]);
     const prompts = (await harness.client.listPrompts()).prompts.map((p) => p.name).sort();
     expect(prompts).toEqual(["controlled-english", "problem-solving"]);
     const resources = (await harness.client.listResources()).resources.map((r) => r.uri).sort();
@@ -270,5 +317,74 @@ describe("solve with no actions", () => {
     const { isError, data } = await call(harness.client, "solve", { scope: "project" });
     expect(isError).toBe(true);
     expect(data).toBeUndefined();
+  });
+});
+
+describe("MCP paper ingestion and retraction", () => {
+  it("ingests a paper by arXiv id as a work and returns its structure", async () => {
+    const { data, isError } = await call(harness.client, "ingest_paper", { id: "1706.03762", scope: "project" });
+    expect(isError).toBe(false);
+    expect(data.work.title).toBe("Attention Is All You Need");
+    expect(data.work.arxivId).toBe("1706.03762");
+    expect(data.work.status).toBe("active");
+    expect(data.sections.length).toBeGreaterThan(0);
+    expect(data.references.length).toBeGreaterThan(0);
+  });
+
+  it("stores a claim drawn from an ingested work", async () => {
+    const ingest = await call(harness.client, "ingest_paper", { id: "1706.03762", scope: "project" });
+    const workId = ingest.data.work.id;
+    const { data, isError } = await call(harness.client, "add_claim", {
+      statement: CLAIM,
+      workId,
+      locator: "Results: BLEU rose",
+      scope: "project",
+    });
+    expect(isError).toBe(false);
+    expect(data.stored).toBe(true);
+    expect(typeof data.id).toBe("string");
+  });
+
+  it("rejects add_claim for an unknown work", async () => {
+    const { isError } = await call(harness.client, "add_claim", {
+      statement: CLAIM,
+      workId: "work-999",
+      locator: "x",
+      scope: "project",
+    });
+    expect(isError).toBe(true);
+  });
+
+  it("invalidates a work's claims when check_retractions finds it newly retracted", async () => {
+    const ingest = await call(harness.client, "ingest_paper", { id: "10.1/bad", scope: "project" });
+    const workId = ingest.data.work.id;
+    expect(ingest.data.work.status).toBe("active");
+    const add = await call(harness.client, "add_claim", { statement: CLAIM, workId, locator: "Abstract", scope: "project" });
+    const claimId = add.data.id as string;
+
+    harness.worker.retracted.add("10.1/bad");
+    const check = await call(harness.client, "check_retractions", { scope: "project" });
+    expect(check.isError).toBe(false);
+    expect(check.data.changed).toHaveLength(1);
+    expect(check.data.changed[0].to).toBe("retracted");
+    expect(check.data.changed[0].invalidated).toContain(claimId);
+  });
+
+  it("reports a clear error when no research worker is configured", async () => {
+    const runtime = await createMemoryRuntime({
+      store: new InMemoryDurableStore(),
+      parser: new StubParser(),
+      embedding: new TokenEmbeddingProvider(256),
+    });
+    const server = createMemoryMcpServer(runtime);
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "no-worker", version: "0.0.0" });
+    await server.connect(st);
+    await client.connect(ct);
+    const { isError } = await call(client, "ingest_paper", { id: "1706.03762", scope: "project" });
+    expect(isError).toBe(true);
+    await client.close();
+    await server.close();
+    await runtime.close();
   });
 });
