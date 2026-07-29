@@ -61,6 +61,15 @@ adapter. Set `OH_MY_GOALS_METTABASE_DIR` and `OH_MY_GOALS_HYPERBASE_PYTHON` so t
 server can parse English; `install` and `install-mcp` carry those settings into the
 registered server when they are present in your environment.
 
+Agent Orchestrator can also expose memory as canonical MeTTa files for its UI and
+other agents. Set `OH_MY_GOALS_AGENT_ID` to the stable agent identity,
+`OH_MY_GOALS_ATOMSPACE_PATH` to that agent's private `notes.metta`, and
+`OH_MY_GOALS_PROJECT_ATOMSPACE_PATH` to the project's shared snapshot. The private
+file contains only session facts for that stable agent. The shared file contains
+project and derived facts. User facts are never written to either file. Agent
+Orchestrator owns these absolute paths; the normal MCP installer does not record
+them in project configuration.
+
 ## Scientific literature assistant
 
 Six more MCP tools turn the same knowledge base into a research assistant over the

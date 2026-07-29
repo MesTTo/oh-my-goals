@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createMemorySpace, MemorySpace } from "../src/memory.js";
+import { assertMettaSymbol } from "../src/metta.js";
 
 let clock = 0;
 function space(): MemorySpace {
@@ -48,6 +49,40 @@ describe("MemorySpace remember and read", () => {
     expect(() =>
       mem.remember({ content: "B.", scope: "user", kind: "goal", sources: [userSource], id: "goal-x" }),
     ).toThrow("proposition id already exists: goal-x");
+  });
+
+  it("accepts tokenizer-safe punctuation and rejects symbols that split on parse", () => {
+    for (const value of ["agent:research", "rule.v1", "repo/path", 'quoted"id', "back\\slash"]) {
+      expect(assertMettaSymbol(value)).toBe(value);
+    }
+    for (const value of [
+      "two words",
+      "open(paren",
+      "close)paren",
+      "line\nbreak",
+      "tab\tbreak",
+      "comment;tail",
+    ]) {
+      expect(() => assertMettaSymbol(value)).toThrow(/round-trip-safe MeTTa symbol/);
+    }
+    expect(() =>
+      mem.remember({
+        id: "two words",
+        content: "A.",
+        scope: "project",
+        kind: "observation",
+        sources: [toolSource],
+      }),
+    ).toThrow(/proposition id.*round-trip-safe MeTTa symbol/);
+    expect(mem.get("two words")).toBeUndefined();
+    expect(() =>
+      mem.remember({
+        content: "A.",
+        scope: "project",
+        kind: "observation",
+        sources: [{ type: "bad(type", reference: "test" }],
+      }),
+    ).toThrow(/sources\[0\].type.*round-trip-safe MeTTa symbol/);
   });
 
   it("stores an optional SH tree and a graded source truth", () => {

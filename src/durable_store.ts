@@ -138,6 +138,10 @@ export interface DurableStore {
   idCounter(prefix: string): number;
   /** Raise the persisted id high-water mark for `prefix` to at least `value`. */
   bumpIdCounter(prefix: string, value: number): void;
+  /** Read one durable runtime-status value. */
+  runtimeState(key: string): string | undefined;
+  /** Set or clear one durable runtime-status value. */
+  setRuntimeState(key: string, value: string | undefined): void;
   /** Run a function as one atomic durable transaction. */
   transaction<T>(fn: () => T): T;
   close(): void;
@@ -160,6 +164,7 @@ export class InMemoryDurableStore implements DurableStore {
   #works = new Map<string, PersistedWork>();
   #citations = new Map<string, PersistedCitation>();
   #counters = new Map<string, number>();
+  #runtimeState = new Map<string, string>();
 
   allRecords(): PersistedRecord[] {
     return [...this.#records.values()].map(cloneRecord);
@@ -189,6 +194,15 @@ export class InMemoryDurableStore implements DurableStore {
     this.#counters.set(prefix, Math.max(this.#counters.get(prefix) ?? 0, value));
   }
 
+  runtimeState(key: string): string | undefined {
+    return this.#runtimeState.get(key);
+  }
+
+  setRuntimeState(key: string, value: string | undefined): void {
+    if (value === undefined) this.#runtimeState.delete(key);
+    else this.#runtimeState.set(key, value);
+  }
+
   insert(record: PersistedRecord): void {
     if (this.#records.has(record.id)) throw new IdConflictError(record.id);
     this.#records.set(record.id, cloneRecord(record));
@@ -212,6 +226,7 @@ export class InMemoryDurableStore implements DurableStore {
     this.#works.clear();
     this.#citations.clear();
     this.#counters.clear();
+    this.#runtimeState.clear();
   }
 }
 
@@ -275,6 +290,10 @@ CREATE INDEX IF NOT EXISTS proposition_scope ON proposition(scope, repository, s
 CREATE TABLE IF NOT EXISTS id_sequence (
   prefix TEXT PRIMARY KEY,
   value INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS runtime_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS work (
   id TEXT PRIMARY KEY,
@@ -578,6 +597,27 @@ export class SqliteDurableStore implements DurableStore {
         )
         .run(prefix, value),
     );
+  }
+
+  runtimeState(key: string): string | undefined {
+    const row = this.#db.prepare("SELECT value FROM runtime_state WHERE key = ?").get(key) as
+      | { value: string }
+      | undefined;
+    return row?.value;
+  }
+
+  setRuntimeState(key: string, value: string | undefined): void {
+    this.transaction(() => {
+      if (value === undefined) {
+        this.#db.prepare("DELETE FROM runtime_state WHERE key = ?").run(key);
+      } else {
+        this.#db
+          .prepare(
+            "INSERT INTO runtime_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+          )
+          .run(key, value);
+      }
+    });
   }
 
   #writeRecord(record: PersistedRecord, replace: boolean): void {

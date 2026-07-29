@@ -78,12 +78,20 @@ export interface MemoryRuntime {
   readonly extractor: ClaimExtractor | undefined;
   readonly repository: string | undefined;
   readonly session: string | undefined;
+  /** Stable AO agent identity used for private session-scope memory. */
+  readonly agent: string | undefined;
   close(): Promise<void>;
 }
 
 export interface MemoryRuntimeOptions {
   readonly repository?: string;
   readonly session?: string;
+  /** Stable AO agent identity. When set, it replaces the attempt id as the session namespace. */
+  readonly agent?: string;
+  /** AO-owned private canonical MeTTa snapshot for this stable agent. */
+  readonly atomspacePath?: string;
+  /** AO-owned shared canonical MeTTa snapshot for project and derived facts. */
+  readonly projectAtomspacePath?: string;
   /** Durable store. Defaults to SQLite at storePath, or non-persistent when neither is set. */
   readonly store?: DurableStore;
   readonly storePath?: string;
@@ -109,12 +117,25 @@ export async function createMemoryRuntime(options: MemoryRuntimeOptions = {}): P
   const backend = new SemanticBackend(embedding, new InMemoryVectorIndex());
   const store =
     options.store ?? (options.storePath !== undefined ? new SqliteDurableStore(options.storePath) : undefined);
+  const memorySession = options.agent ?? options.session;
+  const atomspaceSnapshots =
+    options.atomspacePath !== undefined || options.projectAtomspacePath !== undefined
+      ? {
+          repository: options.repository ?? "local",
+          ...(options.agent !== undefined ? { agent: options.agent } : {}),
+          ...(options.atomspacePath !== undefined ? { agentPath: options.atomspacePath } : {}),
+          ...(options.projectAtomspacePath !== undefined
+            ? { projectPath: options.projectAtomspacePath }
+            : {}),
+        }
+      : undefined;
   const memory = await SemanticMemory.open({
     ...(store !== undefined ? { store } : {}),
     ...(options.repository !== undefined ? { repository: options.repository } : {}),
-    ...(options.session !== undefined ? { session: options.session } : {}),
+    ...(memorySession !== undefined ? { session: memorySession } : {}),
     ...(options.now !== undefined ? { now: options.now } : {}),
     backend,
+    ...(atomspaceSnapshots !== undefined ? { atomspaceSnapshots } : {}),
   });
   const parser = options.parser ?? createHyperbaseParser();
   const researchWorker = options.researchWorker ?? createResearchWorker();
@@ -126,6 +147,7 @@ export async function createMemoryRuntime(options: MemoryRuntimeOptions = {}): P
     extractor,
     repository: options.repository,
     session: options.session,
+    agent: options.agent,
     async close() {
       memory.close();
       await parser.close();
@@ -974,6 +996,8 @@ function registerPromptsAndResources(server: McpServer, runtime: MemoryRuntime):
               },
               repository: runtime.repository ?? null,
               session: runtime.session ?? null,
+              agent: runtime.agent ?? null,
+              atomspaceSnapshot: runtime.memory.atomspaceSnapshotHealth(),
             },
             null,
             2,

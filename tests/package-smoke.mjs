@@ -116,6 +116,7 @@ try {
   const packResult = JSON.parse(packed.stdout)[0];
   const files = new Map(packResult.files.map((file) => [file.path, file]));
   const moduleStems = [
+    "atomspace_snapshot",
     "bibliography",
     "candidates",
     "claim_core",

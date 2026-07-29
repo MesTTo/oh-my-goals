@@ -14,7 +14,13 @@
 // canonical proposition is still active and in scope; establishing a proof over
 // them is the query layer's job.
 
+import { createHash } from "node:crypto";
+
 import { semanticCandidatesForEdge } from "./candidates.js";
+import {
+  AtomspaceSnapshots,
+  type AtomspaceSnapshotOptions,
+} from "./atomspace_snapshot.js";
 import type { Polarity, ShNode } from "./hyperbase.js";
 import {
   createMemorySpace,
@@ -64,6 +70,8 @@ export interface SemanticMemoryOptions {
   readonly backend?: SemanticBackend;
   /** Work statuses that invalidate a work's claims. Defaults to retracted and withdrawn. */
   readonly invalidatingStatuses?: readonly WorkStatus[];
+  /** Optional AO-owned canonical MeTTa proposition snapshots. */
+  readonly atomspaceSnapshots?: AtomspaceSnapshotOptions;
 }
 
 function coerceCandidatePolarity(polarity: string | undefined): CandidatePolarity {
@@ -76,15 +84,45 @@ export interface SemanticHit {
   readonly proposition: StoredProposition;
 }
 
+export interface AtomspaceSnapshotHealth {
+  readonly configured: boolean;
+  readonly dirty: boolean;
+  readonly error?: string;
+}
+
 /** Async, semantic-index-maintaining facade over a synchronous {@link MemorySpace}. */
 export class SemanticMemory {
   readonly #memory: MemorySpace;
   readonly #backend: SemanticBackend | undefined;
+  readonly #snapshots: AtomspaceSnapshots | undefined;
+  readonly #snapshotStateKey: string | undefined;
+  #snapshotError: string | undefined;
   readonly #identity: { readonly repositoryId?: string; readonly sessionId?: string };
 
   private constructor(memory: MemorySpace, options: SemanticMemoryOptions) {
     this.#memory = memory;
     this.#backend = options.backend;
+    this.#snapshots =
+      options.atomspaceSnapshots === undefined
+        ? undefined
+        : new AtomspaceSnapshots(options.atomspaceSnapshots);
+    this.#snapshotStateKey =
+      options.atomspaceSnapshots === undefined
+        ? undefined
+        : `atomspace-snapshot:${createHash("sha256")
+            .update(
+              JSON.stringify([
+                options.atomspaceSnapshots.repository,
+                options.atomspaceSnapshots.agent ?? null,
+                options.atomspaceSnapshots.agentPath ?? null,
+                options.atomspaceSnapshots.projectPath ?? null,
+              ]),
+            )
+            .digest("hex")}`;
+    this.#snapshotError =
+      this.#snapshotStateKey === undefined
+        ? undefined
+        : this.#memory.runtimeState(this.#snapshotStateKey);
     this.#identity = { repositoryId: options.repository, sessionId: options.session };
   }
 
@@ -99,6 +137,7 @@ export class SemanticMemory {
       ...(options.invalidatingStatuses !== undefined ? { invalidatingStatuses: options.invalidatingStatuses } : {}),
     });
     const self = new SemanticMemory(memory, options);
+    self.#refreshSnapshots();
     await self.#rebuildIndex();
     return self;
   }
@@ -272,6 +311,15 @@ export class SemanticMemory {
     return this.#backend?.config();
   }
 
+  /** Whether the optional canonical MeTTa projection matches the durable log. */
+  atomspaceSnapshotHealth(): AtomspaceSnapshotHealth {
+    return {
+      configured: this.#snapshots !== undefined,
+      dirty: this.#snapshotError !== undefined,
+      ...(this.#snapshotError !== undefined ? { error: this.#snapshotError } : {}),
+    };
+  }
+
   /** The underlying synchronous record space, for callers that need direct reads. */
   get space(): MemorySpace {
     return this.#memory;
@@ -299,9 +347,11 @@ export class SemanticMemory {
   // for those that went active. A snapshot of scopes taken before the mutation lets
   // a purged proposition (gone from the record space) still be located for removal.
   async #reconcile<T>(mutate: () => T): Promise<T> {
-    if (this.#backend === undefined) return mutate();
-    const beforeScopes = this.#activeScopes();
+    const beforeScopes =
+      this.#backend === undefined ? undefined : this.#activeScopes();
     const result = mutate();
+    this.#refreshSnapshots();
+    if (this.#backend === undefined || beforeScopes === undefined) return result;
     const after = new Set(this.#memory.activePropositions());
     for (const [id, scope] of beforeScopes) {
       if (!after.has(id)) this.#backend.removeByEdge(this.#spaceId(scope), [id]);
@@ -310,6 +360,24 @@ export class SemanticMemory {
       if (!beforeScopes.has(id)) await this.#indexProposition(id);
     }
     return result;
+  }
+
+  #refreshSnapshots(): void {
+    if (this.#snapshots === undefined || this.#snapshotStateKey === undefined) return;
+    try {
+      this.#snapshots.refresh(() => this.#memory.durableRecords());
+      this.#snapshotError = undefined;
+      this.#memory.setRuntimeState(this.#snapshotStateKey, undefined);
+    } catch (error) {
+      this.#snapshotError = `${
+        error instanceof Error ? error.name : "Error"
+      }: atomspace snapshot refresh failed`;
+      try {
+        this.#memory.setRuntimeState(this.#snapshotStateKey, this.#snapshotError);
+      } catch {
+        // Keep the in-process health signal when the store itself cannot record it.
+      }
+    }
   }
 
   #activeScopes(): Map<string, MemoryScope> {

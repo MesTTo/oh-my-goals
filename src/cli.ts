@@ -54,6 +54,10 @@ environment:
   OH_MY_GOALS_MEMORY_DB          durable store path (default: ./.oh-my-goals/memory.db)
   OH_MY_GOALS_REPOSITORY         project identity (default: current directory name)
   OH_MY_GOALS_SESSION            session identity for session-scoped memory
+  OH_MY_GOALS_AGENT_ID           stable AO agent identity for private memory
+  OH_MY_GOALS_ATOMSPACE_PATH     AO-owned private MeTTa snapshot path
+  OH_MY_GOALS_PROJECT_ATOMSPACE_PATH
+                                 AO-owned shared project MeTTa snapshot path
   OH_MY_GOALS_EMBEDDING          "BGE" for the contextual provider (default: token-hash)
   OH_MY_GOALS_METTABASE_DIR      mettabase checkout for the HyperBase parser
   OH_MY_GOALS_HYPERBASE_PYTHON   the parser's Python interpreter
@@ -370,10 +374,18 @@ async function run(command: CliCommand, io: CliIO): Promise<number> {
     const storePath = process.env.OH_MY_GOALS_MEMORY_DB ?? join(process.cwd(), ".oh-my-goals", "memory.db");
     mkdirSync(dirname(storePath), { recursive: true });
     const session = process.env.OH_MY_GOALS_SESSION;
+    const agent = process.env.OH_MY_GOALS_AGENT_ID;
+    const atomspacePath = process.env.OH_MY_GOALS_ATOMSPACE_PATH;
+    const projectAtomspacePath = process.env.OH_MY_GOALS_PROJECT_ATOMSPACE_PATH;
     await runStdioMemoryServer({
       repository,
       storePath,
       ...(session !== undefined && session !== "" ? { session } : {}),
+      ...(agent !== undefined && agent !== "" ? { agent } : {}),
+      ...(atomspacePath !== undefined && atomspacePath !== "" ? { atomspacePath } : {}),
+      ...(projectAtomspacePath !== undefined && projectAtomspacePath !== ""
+        ? { projectAtomspacePath }
+        : {}),
     });
     return 0;
   }

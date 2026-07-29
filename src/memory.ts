@@ -11,11 +11,14 @@
 // space rebuilds from. Every mutation writes through to the store so a restart
 // recovers the same state.
 
+import { createHash } from "node:crypto";
+
 import {
   IdConflictError,
   InMemoryDurableStore,
   type DurableStore,
   type PersistedCitation,
+  type PersistedDerivation,
   type PersistedRecord,
   type PersistedSource,
   type PersistedWork,
@@ -24,6 +27,7 @@ import type { BibliographicFields } from "./bibliography.js";
 import { claimCore } from "./claim_core.js";
 import type { ShNode } from "./hyperbase.js";
 import {
+  assertMettaSymbol,
   createGoalChainerMetta,
   mettaCall,
   mettaFloat,
@@ -337,7 +341,10 @@ function validateSources(value: unknown): MemorySourceInput[] {
     assertPlainRecord(raw, path);
     assertKnownKeys(raw, path, ["type", "reference", "strength", "confidence", "workId", "locator"]);
     return {
-      type: nonblankString(raw.type, `${path}.type`),
+      type: assertMettaSymbol(
+        nonblankString(raw.type, `${path}.type`),
+        `${path}.type`,
+      ),
       reference: nonblankString(raw.reference, `${path}.reference`),
       strength: unitInterval(raw.strength, `${path}.strength`, 1),
       confidence: unitInterval(raw.confidence, `${path}.confidence`, 1),
@@ -530,6 +537,135 @@ function mutableToPersisted(record: MutableRecord): PersistedRecord {
   };
 }
 
+/** Build the ground MeTTa facts reflected for one durable proposition.
+ *
+ * Snapshot exporters use this same function as the live memory space, so the
+ * on-disk atomspace cannot drift from the facts used for reasoning. Pass the ids
+ * included in a snapshot to suppress supersession edges whose other endpoint is
+ * outside that snapshot's scope.
+ */
+export function memoryRecordFacts(
+  record: PersistedRecord,
+  includedIds?: ReadonlySet<string>,
+): readonly Term[] {
+  const facts: Term[] = [
+    mettaCall(
+      "MemoryProposition",
+      memorySymbol(record.id, "proposition id"),
+      mettaSymbol(record.scope),
+      mettaSymbol(record.kind),
+    ),
+    mettaCall("MemoryContent", memorySymbol(record.id, "proposition id"), mettaString(record.content)),
+    mettaCall(
+      "MemoryState",
+      memorySymbol(record.id, "proposition id"),
+      memorySymbol(record.state, "proposition state"),
+      mettaInteger(record.revision),
+    ),
+    mettaCall("MemoryRecordedAt", memorySymbol(record.id, "proposition id"), mettaString(record.recordedAt)),
+  ];
+  if (record.tree !== undefined) {
+    facts.push(mettaCall("MemoryTree", memorySymbol(record.id, "proposition id"), mettaString(record.tree)));
+  }
+  const core = claimCoreFact(record);
+  if (core !== null) facts.push(core);
+  for (const source of record.sources) facts.push(...sourceFacts(record.id, source));
+  for (const derivation of record.derivations) {
+    facts.push(derivationFact(record.id, derivation));
+  }
+  if (
+    record.supersedes !== undefined &&
+    (includedIds === undefined || includedIds.has(record.supersedes))
+  ) {
+    facts.push(
+      mettaCall(
+        "MemorySupersedes",
+        memorySymbol(record.id, "proposition id"),
+        memorySymbol(record.supersedes, "superseded proposition id"),
+      ),
+    );
+  }
+  return facts;
+}
+
+function claimCoreFact(record: PersistedRecord): ReturnType<typeof mettaCall> | null {
+  if (record.shTree === undefined || record.polarity === undefined) return null;
+  let core: ReturnType<typeof claimCore>;
+  try {
+    core = claimCore(JSON.parse(record.shTree) as ShNode);
+  } catch {
+    return null;
+  }
+  if (core === null) return null;
+  const unit =
+    record.sources.find((source) => source.workId !== undefined)?.workId ??
+    `own-${record.id}`;
+  return mettaCall(
+    "ClaimCore",
+    memorySymbol(record.id, "proposition id"),
+    mettaString(core.key),
+    memorySymbol(record.polarity, "polarity"),
+    memorySymbol(unit, "claim unit"),
+  );
+}
+
+function sourceFacts(id: string, source: PersistedSource): readonly Term[] {
+  return [
+    mettaCall(
+      "MemorySource",
+      memorySymbol(id, "proposition id"),
+      memorySymbol(source.assertionId, "assertion id"),
+      memorySymbol(source.type, "source type"),
+      mettaString(source.reference),
+    ),
+    mettaCall(
+      "MemoryAssertionState",
+      memorySymbol(id, "proposition id"),
+      memorySymbol(source.assertionId, "assertion id"),
+      memorySymbol(source.state, "assertion state"),
+    ),
+    mettaCall(
+      "MemorySourceTruth",
+      memorySymbol(id, "proposition id"),
+      memorySymbol(source.assertionId, "assertion id"),
+      mettaFloat(source.strength),
+      mettaFloat(source.confidence),
+    ),
+  ];
+}
+
+function derivationFact(id: string, derivation: PersistedDerivation): Term {
+  return mettaCall(
+    "MemoryDerivation",
+    memorySymbol(id, "proposition id"),
+    encodedMemorySymbol(derivation.rule, "derivation-rule"),
+    mettaTuple(
+      derivation.premises.map((premise) =>
+        memorySymbol(premise, "derivation premise"),
+      ),
+    ),
+  );
+}
+
+function memorySymbol(value: string, name: string): ReturnType<typeof mettaSymbol> {
+  return mettaSymbol(assertMettaSymbol(value, name));
+}
+
+// Rule labels are descriptive source references in the public API and may contain
+// spaces. Keep the original in SQLite and explanations, and use a stable opaque
+// symbol only when its text cannot round-trip as one MeTTa token.
+function encodedMemorySymbol(
+  value: string,
+  prefix: string,
+): ReturnType<typeof mettaSymbol> {
+  try {
+    return memorySymbol(value, prefix);
+  } catch {
+    const digest = createHash("sha256").update(value).digest("hex");
+    return mettaSymbol(`${prefix}-sha256-${digest}`);
+  }
+}
+
 /** A live memory of propositions whose visibility is decided in native MeTTa. */
 export class MemorySpace {
   private readonly db: GoalChainerMetta = createGoalChainerMetta();
@@ -552,7 +688,7 @@ export class MemorySpace {
 
   constructor(options: MemorySpaceOptions = {}) {
     this.now = options.now ?? (() => new Date().toISOString());
-    this.idPrefix = options.idPrefix ?? "prop";
+    this.idPrefix = assertMettaSymbol(options.idPrefix ?? "prop", "idPrefix");
     this.idPattern = new RegExp(`^${escapeRegExp(this.idPrefix)}-(\\d+)$`);
     this.store = options.store ?? new InMemoryDurableStore();
     this.repository = options.repository ?? "local";
@@ -689,7 +825,10 @@ export class MemorySpace {
     const title = nonblankString(input.title, "title");
     const existing = this.findWorkByExternalId(input, scope);
     if (existing !== undefined) return freezeWork(existing);
-    const id = input.id ?? this.nextWorkId();
+    const id = assertMettaSymbol(
+      input.id === undefined ? this.nextWorkId() : nonblankString(input.id, "work id"),
+      "work id",
+    );
     if (input.id !== undefined && this.works.has(id)) {
       throw new RangeError(`work id already exists: ${id}`);
     }
@@ -943,6 +1082,19 @@ export class MemorySpace {
     this.store.close();
   }
 
+  /** Read a fresh durable view for atomspace projection under an external lock. */
+  durableRecords(): readonly PersistedRecord[] {
+    return this.store.allRecords();
+  }
+
+  runtimeState(key: string): string | undefined {
+    return this.store.runtimeState(key);
+  }
+
+  setRuntimeState(key: string, value: string | undefined): void {
+    this.store.setRuntimeState(key, value);
+  }
+
   /** Every active proposition identifier across all scopes. */
   activePropositions(): readonly string[] {
     return this.stream(mettaCall("gc-mem-active-proposition"));
@@ -1153,8 +1305,16 @@ export class MemorySpace {
     const tree = fields.tree === undefined ? undefined : nonblankString(fields.tree, "tree");
     const recordedAt =
       fields.recordedAt === undefined ? this.now() : nonblankString(fields.recordedAt, "recordedAt");
+    const id = assertMettaSymbol(this.resolveNewId(fields.id), "proposition id");
+    const polarity =
+      fields.polarity === undefined
+        ? undefined
+        : assertMettaSymbol(
+            nonblankString(fields.polarity, "polarity"),
+            "polarity",
+          );
     return {
-      id: this.resolveNewId(fields.id),
+      id,
       scope: fields.scope,
       kind: fields.kind,
       content: fields.content,
@@ -1163,7 +1323,7 @@ export class MemorySpace {
       recordedAt,
       tree,
       shTree: fields.shTree,
-      polarity: fields.polarity,
+      polarity,
       repository: this.repository,
       session: this.session,
       sources: [],
@@ -1255,114 +1415,23 @@ export class MemorySpace {
   // tree, each source, each derivation, and supersession. Used on create and on
   // durable rebuild, so it must honor the record's actual state, not assume active.
   private rebuildFacts(record: MutableRecord): void {
-    this.writePropositionFacts(record);
-    for (const source of record.sources) this.writeSourceFacts(record, source);
-    for (const derivation of record.derivations) this.writeDerivationFacts(record, derivation);
-    if (record.supersedes !== undefined) {
-      this.db.add(mettaCall("MemorySupersedes", mettaSymbol(record.id), mettaSymbol(record.supersedes)));
-    }
+    this.db.add(...memoryRecordFacts(mutableToPersisted(record)));
   }
 
   // Remove every ground fact for a record. Mirrors rebuildFacts so purge leaves no
   // trace of the proposition in the live space. GoalChainerMetta.remove takes one
   // atom at a time, so each fact is removed with its own call.
   private removeFacts(record: MutableRecord): void {
-    this.db.remove(mettaCall("MemoryProposition", mettaSymbol(record.id), mettaSymbol(record.scope), mettaSymbol(record.kind)));
-    this.db.remove(mettaCall("MemoryContent", mettaSymbol(record.id), mettaString(record.content)));
-    this.db.remove(mettaCall("MemoryState", mettaSymbol(record.id), mettaSymbol(record.state), mettaInteger(record.revision)));
-    this.db.remove(mettaCall("MemoryRecordedAt", mettaSymbol(record.id), mettaString(record.recordedAt)));
-    if (record.tree !== undefined) {
-      this.db.remove(mettaCall("MemoryTree", mettaSymbol(record.id), mettaString(record.tree)));
-    }
-    const core = this.claimCoreFact(record);
-    if (core !== null) this.db.remove(core);
-    for (const source of record.sources) {
-      this.db.remove(mettaCall("MemorySource", mettaSymbol(record.id), mettaSymbol(source.assertionId), mettaSymbol(source.type), mettaString(source.reference)));
-      this.db.remove(mettaCall("MemoryAssertionState", mettaSymbol(record.id), mettaSymbol(source.assertionId), mettaSymbol(source.state)));
-      this.db.remove(mettaCall("MemorySourceTruth", mettaSymbol(record.id), mettaSymbol(source.assertionId), mettaFloat(source.strength), mettaFloat(source.confidence)));
-    }
-    for (const derivation of record.derivations) {
-      this.db.remove(
-        mettaCall(
-          "MemoryDerivation",
-          mettaSymbol(record.id),
-          mettaSymbol(derivation.rule),
-          mettaTuple(derivation.premises.map((premise) => mettaSymbol(premise))),
-        ),
-      );
-    }
-    if (record.supersedes !== undefined) {
-      this.db.remove(mettaCall("MemorySupersedes", mettaSymbol(record.id), mettaSymbol(record.supersedes)));
+    for (const fact of memoryRecordFacts(mutableToPersisted(record))) {
+      this.db.remove(fact);
     }
     if (record.supersededBy !== undefined) {
       this.db.remove(mettaCall("MemorySupersedes", mettaSymbol(record.supersededBy), mettaSymbol(record.id)));
     }
   }
 
-  private writePropositionFacts(record: MutableRecord): void {
-    this.db.add(
-      mettaCall(
-        "MemoryProposition",
-        mettaSymbol(record.id),
-        mettaSymbol(record.scope),
-        mettaSymbol(record.kind),
-      ),
-      mettaCall("MemoryContent", mettaSymbol(record.id), mettaString(record.content)),
-      mettaCall("MemoryState", mettaSymbol(record.id), mettaSymbol(record.state), mettaInteger(record.revision)),
-      mettaCall("MemoryRecordedAt", mettaSymbol(record.id), mettaString(record.recordedAt)),
-    );
-    if (record.tree !== undefined) {
-      this.db.add(mettaCall("MemoryTree", mettaSymbol(record.id), mettaString(record.tree)));
-    }
-    const core = this.claimCoreFact(record);
-    if (core !== null) this.db.add(core);
-  }
-
-  // The ClaimCore fact of a record: its logical core, polarity, and the work that
-  // asserts it, so MeTTa can group claims into statements and read corroboration
-  // and contradiction across works. Null when the tree yields no relational core.
-  private claimCoreFact(record: MutableRecord): ReturnType<typeof mettaCall> | null {
-    if (record.shTree === undefined || record.polarity === undefined) return null;
-    let core: ReturnType<typeof claimCore>;
-    try {
-      core = claimCore(JSON.parse(record.shTree) as ShNode);
-    } catch {
-      return null;
-    }
-    if (core === null) return null;
-    const unit = record.sources.find((source) => source.workId !== undefined)?.workId ?? `own-${record.id}`;
-    return mettaCall(
-      "ClaimCore",
-      mettaSymbol(record.id),
-      mettaString(core.key),
-      mettaSymbol(record.polarity),
-      mettaSymbol(unit),
-    );
-  }
-
   private writeSourceFacts(record: MutableRecord, source: MutableSource): void {
-    this.db.add(
-      mettaCall(
-        "MemorySource",
-        mettaSymbol(record.id),
-        mettaSymbol(source.assertionId),
-        mettaSymbol(source.type),
-        mettaString(source.reference),
-      ),
-      mettaCall(
-        "MemoryAssertionState",
-        mettaSymbol(record.id),
-        mettaSymbol(source.assertionId),
-        mettaSymbol(source.state),
-      ),
-      mettaCall(
-        "MemorySourceTruth",
-        mettaSymbol(record.id),
-        mettaSymbol(source.assertionId),
-        mettaFloat(source.strength),
-        mettaFloat(source.confidence),
-      ),
-    );
+    this.db.add(...sourceFacts(record.id, source));
   }
 
   private appendDerivation(record: MutableRecord, rule: string, premises: readonly string[]): void {
@@ -1372,14 +1441,7 @@ export class MemorySpace {
   }
 
   private writeDerivationFacts(record: MutableRecord, derivation: StoredDerivation): void {
-    this.db.add(
-      mettaCall(
-        "MemoryDerivation",
-        mettaSymbol(record.id),
-        mettaSymbol(derivation.rule),
-        mettaTuple(derivation.premises.map((premise) => mettaSymbol(premise))),
-      ),
-    );
+    this.db.add(derivationFact(record.id, derivation));
   }
 
   // Rewrite the single MemoryState fact, moving to the given state and bumping the revision.

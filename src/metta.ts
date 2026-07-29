@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   expr,
+  format,
   gfloat,
   gint,
   gstr,
@@ -219,6 +220,8 @@ export function createGoalChainerMetta(): GoalChainerMetta {
 }
 
 let sharedEvaluator: GoalChainerMetta | undefined;
+const validSymbols = new Set<string>();
+const invalidSymbols = new Set<string>();
 
 /** Reuse the immutable framework rule space for pure relation calls. */
 export function sharedGoalChainerMetta(): GoalChainerMetta {
@@ -236,7 +239,44 @@ export function mettaTuple(values: readonly Term[]): ExpressionAtom {
   return new ExpressionAtom(expr(values.map((value) => ground(value).catom)));
 }
 
-/** Build a MeTTa symbol after the caller validates its vocabulary. */
+/** Require text that formats and parses as exactly one MeTTa symbol. */
+export function assertMettaSymbol(value: string, name = "value"): string {
+  if (invalidSymbols.has(value)) {
+    throw new RangeError(`${name} is not one round-trip-safe MeTTa symbol: ${JSON.stringify(value)}`);
+  }
+  if (!validSymbols.has(value)) {
+    let valid = false;
+    const hasUnsafeDelimiter =
+      value === "" ||
+      value.startsWith('"') ||
+      /[();\s\u0000-\u001f\u007f]/u.test(value);
+    try {
+      if (hasUnsafeDelimiter) throw new SyntaxError("symbol contains a delimiter");
+      const parsed = parseAll(`(${value})`, standardTokenizer());
+      const outer = parsed[0]?.atom;
+      const child = outer?.kind === "expr" ? outer.items?.[0] : undefined;
+      valid =
+        parsed.length === 1 &&
+        parsed[0]?.bang === false &&
+        outer?.kind === "expr" &&
+        outer.items?.length === 1 &&
+        child?.kind === "sym" &&
+        child.name === value;
+    } catch {
+      valid = false;
+    }
+    if (!valid) {
+      invalidSymbols.add(value);
+      throw new RangeError(
+        `${name} is not one round-trip-safe MeTTa symbol: ${JSON.stringify(value)}`,
+      );
+    }
+    validSymbols.add(value);
+  }
+  return value;
+}
+
+/** Build a MeTTa symbol. Use assertMettaSymbol at persistence boundaries. */
 export function mettaSymbol(value: string): Atom {
   return S(value);
 }
@@ -261,6 +301,11 @@ export function mettaInteger(value: number): Atom {
 export function mettaString(value: string): Atom {
   if (typeof value !== "string") throw new TypeError("MeTTa string value must be a string");
   return new GroundedAtom(gstr(value));
+}
+
+/** Render a host term with the canonical MeTTa formatter. */
+export function formatMettaTerm(value: Term): string {
+  return format(ground(value).catom);
 }
 
 /** Evaluate one native relation and require one deterministic result. */
